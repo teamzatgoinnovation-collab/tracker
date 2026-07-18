@@ -136,7 +136,7 @@ def pause_session(name: str | None = None, user: str | None = None) -> dict:
 	doc.duration_seconds = (doc.duration_seconds or 0) + _elapsed(doc.started_on, now)
 	doc.paused_on = now
 	doc.status = "Paused"
-	doc.save(ignore_permissions=True)
+	_save_session(doc)
 	frappe.db.commit()
 	return _session_payload(doc)
 
@@ -157,7 +157,7 @@ def resume_session(name: str, user: str | None = None) -> dict:
 	doc.started_on = now_datetime()
 	doc.paused_on = None
 	doc.status = "Running"
-	doc.save(ignore_permissions=True)
+	_save_session(doc)
 	frappe.db.commit()
 	return _session_payload(doc)
 
@@ -170,7 +170,7 @@ def stop_session(name: str | None = None, *, flush: bool = True, user: str | Non
 		doc.duration_seconds = (doc.duration_seconds or 0) + _elapsed(doc.started_on, now)
 	doc.ended_on = now
 	doc.status = "Stopped"
-	doc.save(ignore_permissions=True)
+	_save_session(doc)
 	if flush:
 		_flush_to_timesheet(doc)
 	frappe.db.commit()
@@ -202,6 +202,21 @@ def _get_owned_session(name: str | None, user: str):
 	if doc.user != user and "System Manager" not in frappe.get_roles(user) and user != "Administrator":
 		frappe.throw(_("Not your session."), frappe.PermissionError)
 	return doc
+
+
+def _ensure_draft(doc) -> None:
+	"""Activity sessions are timers — never stay submitted (blocks Pause/Stop)."""
+	if int(getattr(doc, "docstatus", 0) or 0) != 1:
+		return
+	frappe.db.set_value(DOCTYPE, doc.name, "docstatus", 0, update_modified=False)
+	doc.docstatus = 0
+
+
+def _save_session(doc) -> None:
+	_ensure_draft(doc)
+	doc.flags.ignore_permissions = True
+	doc.flags.ignore_validate_update_after_submit = True
+	doc.save(ignore_permissions=True)
 
 
 def _elapsed(started_on, ended_on) -> float:

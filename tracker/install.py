@@ -46,6 +46,27 @@ def after_migrate() -> None:
 	ensure_role_permissions()
 	_ensure_activity_type("Execution")
 	_ensure_desk_entry()
+	_unsubmit_live_activity_sessions()
+
+
+def _unsubmit_live_activity_sessions() -> None:
+	"""Keep Running/Paused timers editable (never stay submitted)."""
+	if not frappe.db.exists("DocType", "Tracker Activity Session"):
+		return
+	frappe.db.sql(
+		"""
+		UPDATE `tabTracker Activity Session`
+		SET docstatus = 0
+		WHERE docstatus = 1 AND status IN ('Running', 'Paused')
+		"""
+	)
+	frappe.db.set_value(
+		"DocType",
+		"Tracker Activity Session",
+		"is_submittable",
+		0,
+		update_modified=False,
+	)
 
 
 def _ensure_employee_custom_fields() -> None:
