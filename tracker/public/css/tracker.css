@@ -1,0 +1,16 @@
+.tracker-workbench .tracker-task-row {
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--border-color);
+	cursor: pointer;
+}
+.tracker-workbench .tracker-task-row:hover {
+	background: var(--bg-light-gray);
+}
+.tracker-workbench .tracker-task-row.selected {
+	background: var(--bg-blue-light, #e8f0fe);
+	border-left: 3px solid var(--primary);
+}
+.tracker-workbench .tracker-btn-row {
+	display: flex;
+	gap: 8px;
+}

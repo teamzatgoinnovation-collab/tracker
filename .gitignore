@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.swp
+.DS_Store
+node_modules/
+.frappe
+sites/
+*.log

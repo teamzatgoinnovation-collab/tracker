@@ -1,0 +1,3 @@
+recursive-include tracker/templates *
+recursive-include tracker/public *
+recursive-include tracker/fixtures *
