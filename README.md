@@ -24,9 +24,9 @@ Minimal ERPNext domain app for company-scoped projects, tasks (with subtasks via
 
 ```bash
 bench get-app https://github.com/teamzatgoinnovation-collab/tracker.git
-bench --site <site> install-app tracker
-bench --site <site> migrate
-bench --site <site> clear-cache
+bench --site erp.zatgo.online install-app tracker
+bench --site erp.zatgo.online migrate
+bench --site erp.zatgo.online clear-cache
 ```
 
 ### Docker / frappe_docker important
@@ -39,10 +39,12 @@ cd /home/frappe/frappe-bench
 ./env/bin/pip install -e apps/tracker
 # then restart backend (and optionally queue/websocket)
 docker restart <backend-container>
-bench --site <site> clear-cache
+bench --site erp.zatgo.online clear-cache
 ```
 
 Without the editable install + restart, Desk may return **Internal Server Error** with `ModuleNotFoundError: No module named 'tracker'`.
+
+Default site name (local + cloud): **`erp.zatgo.online`**.
 
 ## Desk
 
