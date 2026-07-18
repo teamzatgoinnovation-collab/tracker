@@ -23,7 +23,52 @@ def get_active_session(user: str | None = None) -> dict | None:
 	)
 	if not name:
 		return None
-	return frappe.get_doc(DOCTYPE, name).as_dict()
+	doc = frappe.get_doc(DOCTYPE, name)
+	data = doc.as_dict()
+	data["elapsed_seconds"] = _live_elapsed(doc)
+	return data
+
+
+def list_running_sessions(company: str | None = None) -> list[dict]:
+	"""Sessions currently Running (manager view)."""
+	filters: dict = {"status": "Running"}
+	if company:
+		filters["company"] = company
+	else:
+		company = get_company_for_user()
+		if company:
+			filters["company"] = company
+	rows = frappe.get_all(
+		DOCTYPE,
+		filters=filters,
+		fields=[
+			"name",
+			"user",
+			"employee",
+			"project",
+			"task",
+			"activity_type",
+			"status",
+			"started_on",
+			"duration_seconds",
+			"company",
+		],
+		order_by="started_on desc",
+		limit_page_length=200,
+	)
+	out = []
+	for row in rows:
+		doc = frappe._dict(row)
+		doc.elapsed_seconds = _live_elapsed(doc)
+		out.append(doc)
+	return out
+
+
+def _live_elapsed(doc) -> float:
+	base = float(doc.duration_seconds or 0)
+	if getattr(doc, "status", None) == "Running" and getattr(doc, "started_on", None):
+		base += _elapsed(doc.started_on, now_datetime())
+	return base
 
 
 def start_session(

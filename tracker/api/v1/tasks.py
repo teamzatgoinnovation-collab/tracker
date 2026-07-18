@@ -17,8 +17,12 @@ def list_tasks(
 	project: str | None = None,
 	status: str | None = None,
 	mine: int = 0,
+	team: int = 0,
 	parent_task: str | None = None,
+	tree: int = 0,
 ):
+	from tracker.permissions.hierarchy import get_subordinate_users
+
 	page = int(page or 1)
 	page_size = min(int(page_size or 50), 200)
 	filters: dict = {}
@@ -31,13 +35,32 @@ def list_tasks(
 		filters["status"] = status
 	if parent_task:
 		filters["parent_task"] = parent_task
-	if int(mine or 0):
-		filters["_assign"] = ("like", f"%{frappe.session.user}%")
+	# tree=1 is a client hint; return full filtered set so UI can nest by parent_task
 
-	total = frappe.db.count("Task", filters)
+	or_filters = None
+	if int(mine or 0) and int(team or 0):
+		users = {frappe.session.user} | get_subordinate_users()
+		or_filters = [["_assign", "like", f"%{u}%"] for u in users]
+	elif int(mine or 0):
+		filters["_assign"] = ("like", f"%{frappe.session.user}%")
+	elif int(team or 0):
+		users = get_subordinate_users()
+		if not users:
+			return paginated([], page=page, page_size=page_size, total=0)
+		or_filters = [["_assign", "like", f"%{u}%"] for u in users]
+
+	total = len(
+		frappe.get_all(
+			"Task",
+			filters=filters,
+			or_filters=or_filters,
+			pluck="name",
+		)
+	)
 	rows = frappe.get_all(
 		"Task",
 		filters=filters,
+		or_filters=or_filters,
 		fields=[
 			"name",
 			"subject",

@@ -43,3 +43,9 @@ def next(task: str, project: str | None = None, activity_type: str | None = None
 @frappe.whitelist()
 def stop(name: str | None = None):
 	return ok(activity_service.stop_session(name, flush=True))
+
+
+@frappe.whitelist()
+def running_now(company: str | None = None):
+	"""Who is Running right now (company-scoped)."""
+	return ok(activity_service.list_running_sessions(company=company))

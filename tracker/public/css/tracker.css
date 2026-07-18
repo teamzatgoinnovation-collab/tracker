@@ -13,4 +13,12 @@
 .tracker-workbench .tracker-btn-row {
 	display: flex;
 	gap: 8px;
+	flex-wrap: wrap;
+}
+.tracker-org-row {
+	padding: 6px 0;
+	border-bottom: 1px solid var(--border-color);
+}
+.tracker-org-row .btn {
+	margin-left: 8px;
 }
