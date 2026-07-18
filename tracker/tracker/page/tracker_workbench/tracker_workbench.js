@@ -55,6 +55,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		active: null,
 		tab: "tasks",
 		elapsedTimer: null,
+		assignPeople: [],
 	};
 
 	const $root = $(page.main);
@@ -222,7 +223,8 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			frappe.call("tracker.api.v1.activity.active"),
 			frappe.call("tracker.api.v1.tickets.list_tickets", { page_size: 100 }),
 			frappe.call("tracker.api.v1.activity.running_now"),
-		]).then(([tasksRes, activeRes, ticketsRes, runningRes]) => {
+			frappe.call("tracker.api.v1.hierarchy.my_tree"),
+		]).then(([tasksRes, activeRes, ticketsRes, runningRes, treeRes]) => {
 			const unwrap = (res) => {
 				const m = res.message || {};
 				return m.success === false ? null : m.data;
@@ -231,6 +233,14 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			state.active = unwrap(activeRes);
 			state.tickets = unwrap(ticketsRes) || [];
 			state.running = unwrap(runningRes) || [];
+			const tree = unwrap(treeRes) || {};
+			state.assignPeople = tree.people || [];
+			if (!state.assignPeople.length && tree.user) {
+				state.assignPeople = [{ user: tree.user, full_name: tree.user, is_self: true }];
+				(tree.subordinates || []).forEach((u) => {
+					state.assignPeople.push({ user: u, full_name: u, is_self: false });
+				});
+			}
 			renderTasks();
 			renderTickets();
 			renderRunning();
@@ -238,6 +248,22 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		}).catch((e) => {
 			frappe.msgprint({ title: __("Error"), message: e.message || e, indicator: "red" });
 		});
+	}
+
+	function assignSelectField(fieldname, label) {
+		const opts = (state.assignPeople || []).map((p) => p.user).join("\n");
+		const hint = (state.assignPeople || [])
+			.map((p) => `${p.full_name || p.user}${p.is_self ? " (you)" : ""}`)
+			.join(", ");
+		return {
+			fieldname,
+			label: label || __("Assign To"),
+			fieldtype: "Select",
+			options: "\n" + opts,
+			description: hint
+				? __("Self or people below you") + ": " + hint
+				: __("Self or people below you in the org tree"),
+		};
 	}
 
 	function callActivity(method, args) {
@@ -303,7 +329,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				{ fieldname: "subject", label: __("Subject"), fieldtype: "Data", reqd: 1 },
 				{ fieldname: "project", label: __("Project"), fieldtype: "Link", options: "Project" },
 				{ fieldname: "parent_task", label: __("Parent Task"), fieldtype: "Link", options: "Task" },
-				{ fieldname: "assign_to", label: __("Assign To"), fieldtype: "Link", options: "User" },
+				assignSelectField("assign_to"),
 			],
 			primary_action_label: __("Create"),
 			primary_action(values) {
@@ -311,7 +337,15 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					method: "tracker.api.v1.tasks.create_task",
 					args: values,
 					freeze: true,
-					callback: () => {
+					callback: (r) => {
+						if (r.message && r.message.success === false) {
+							frappe.msgprint({
+								title: __("Create failed"),
+								message: (r.message.error && r.message.error.message) || __("Failed"),
+								indicator: "red",
+							});
+							return;
+						}
 						d.hide();
 						load();
 					},
@@ -328,7 +362,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				{ fieldname: "subject", label: __("Subject"), fieldtype: "Data", reqd: 1 },
 				{ fieldname: "project", label: __("Project"), fieldtype: "Link", options: "Project" },
 				{ fieldname: "description", label: __("Description"), fieldtype: "Small Text" },
-				{ fieldname: "assign_to", label: __("Assign To"), fieldtype: "Link", options: "User" },
+				assignSelectField("assign_to"),
 			],
 			primary_action_label: __("Create"),
 			primary_action(values) {
@@ -336,7 +370,15 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					method: "tracker.api.v1.tickets.create_ticket",
 					args: values,
 					freeze: true,
-					callback: () => {
+					callback: (r) => {
+						if (r.message && r.message.success === false) {
+							frappe.msgprint({
+								title: __("Create failed"),
+								message: (r.message.error && r.message.error.message) || __("Failed"),
+								indicator: "red",
+							});
+							return;
+						}
 						d.hide();
 						showTab("tickets");
 						load();
@@ -355,9 +397,13 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			frappe.msgprint(__("Select a task or ticket first."));
 			return;
 		}
+		if (!(state.assignPeople || []).length) {
+			frappe.msgprint(__("No assignable people in your org tree. Set Employee reports_to first."));
+			return;
+		}
 		const d = new frappe.ui.Dialog({
 			title: __("Assign") + " " + doctype,
-			fields: [{ fieldname: "user", label: __("User"), fieldtype: "Link", options: "User", reqd: 1 }],
+			fields: [Object.assign(assignSelectField("user", __("Assignee")), { reqd: 1 })],
 			primary_action_label: __("Assign"),
 			primary_action(values) {
 				frappe.call({
@@ -376,6 +422,13 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 							d.hide();
 							load();
 						}
+					},
+					error: (err) => {
+						frappe.msgprint({
+							title: __("Assign failed"),
+							message: (err && err.message) || __("Not allowed — assign only down your org tree"),
+							indicator: "red",
+						});
 					},
 				});
 			},

@@ -7,11 +7,35 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 from tracker.permissions.roles import ensure_role_permissions, ensure_roles
 
+SIDEBAR_ITEMS = [
+	{"label": "Workbench", "link_type": "Page", "link_to": "tracker-workbench", "type": "Link", "icon": "list"},
+	{"label": "Org Setup", "link_type": "Page", "link_to": "tracker-org", "type": "Link", "icon": "organization"},
+	{"label": "Project", "link_type": "DocType", "link_to": "Project", "type": "Link", "icon": "project"},
+	{"label": "Task", "link_type": "DocType", "link_to": "Task", "type": "Link", "icon": "list-checks"},
+	{"label": "Issue", "link_type": "DocType", "link_to": "Issue", "type": "Link", "icon": "ticket"},
+	{"label": "Employee", "link_type": "DocType", "link_to": "Employee", "type": "Link", "icon": "users"},
+	{
+		"label": "Activity Session",
+		"link_type": "DocType",
+		"link_to": "Tracker Activity Session",
+		"type": "Link",
+		"icon": "timer",
+	},
+	{
+		"label": "Settings",
+		"link_type": "DocType",
+		"link_to": "Tracker Settings",
+		"type": "Link",
+		"icon": "setting",
+	},
+]
+
 
 def after_install() -> None:
 	ensure_roles()
 	_ensure_employee_custom_fields()
 	ensure_role_permissions()
+	_ensure_activity_type("Execution")
 	_ensure_desk_entry()
 	frappe.clear_cache()
 
@@ -20,6 +44,7 @@ def after_migrate() -> None:
 	ensure_roles()
 	_ensure_employee_custom_fields()
 	ensure_role_permissions()
+	_ensure_activity_type("Execution")
 	_ensure_desk_entry()
 
 
@@ -41,6 +66,19 @@ def _ensure_employee_custom_fields() -> None:
 	)
 
 
+def _ensure_activity_type(name: str) -> None:
+	if not name or not frappe.db.exists("DocType", "Activity Type"):
+		return
+	if frappe.db.exists("Activity Type", name):
+		return
+	try:
+		frappe.get_doc({"doctype": "Activity Type", "activity_type": name}).insert(
+			ignore_permissions=True
+		)
+	except Exception:
+		pass
+
+
 def _ensure_desk_entry() -> None:
 	"""Frappe v16 Desk uses Workspace Sidebar + Desktop Icon (not Workspace alone)."""
 	# Drop retired Project Tracker leftovers that hide the real app
@@ -55,31 +93,37 @@ def _ensure_desk_entry() -> None:
 			except Exception:
 				pass
 
-	if not frappe.db.exists("Workspace Sidebar", "Tracker") and frappe.db.exists(
-		"Module Def", "Tracker"
-	):
-		# Sidebar JSON sync normally handles this; create a minimal fallback
-		sb = frappe.get_doc(
-			{
-				"doctype": "Workspace Sidebar",
-				"name": "Tracker",
-				"title": "Tracker",
-				"header_icon": "project",
-				"module": "Tracker",
-				"app": "tracker",
-				"standard": 1,
-				"items": [
-					{
-						"label": "Workbench",
-						"link_type": "Page",
-						"link_to": "tracker-workbench",
-						"type": "Link",
-						"icon": "list",
-					}
-				],
-			}
-		)
-		sb.insert(ignore_permissions=True)
+	if frappe.db.exists("Module Def", "Tracker"):
+		if frappe.db.exists("Workspace Sidebar", "Tracker"):
+			sb = frappe.get_doc("Workspace Sidebar", "Tracker")
+			# Keep app/module wired; refill items if empty
+			changed = False
+			if sb.app != "tracker":
+				sb.app = "tracker"
+				changed = True
+			if sb.module != "Tracker":
+				sb.module = "Tracker"
+				changed = True
+			if not sb.items:
+				for item in SIDEBAR_ITEMS:
+					sb.append("items", item)
+				changed = True
+			if changed:
+				sb.save(ignore_permissions=True)
+		else:
+			sb = frappe.get_doc(
+				{
+					"doctype": "Workspace Sidebar",
+					"name": "Tracker",
+					"title": "Tracker",
+					"header_icon": "project",
+					"module": "Tracker",
+					"app": "tracker",
+					"standard": 1,
+					"items": SIDEBAR_ITEMS,
+				}
+			)
+			sb.insert(ignore_permissions=True)
 
 	icons = frappe.get_all("Desktop Icon", filters={"app": "tracker"}, pluck="name")
 	if not icons:

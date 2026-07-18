@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import frappe
 from frappe import _
 from frappe.utils import get_datetime, now_datetime, time_diff_in_seconds
 
 from tracker.permissions.hierarchy import get_company_for_user, get_employee_for_user
+from tracker.tracker.doctype.tracker_settings.tracker_settings import get_default_activity_type
 
 DOCTYPE = "Tracker Activity Session"
 
@@ -23,10 +24,7 @@ def get_active_session(user: str | None = None) -> dict | None:
 	)
 	if not name:
 		return None
-	doc = frappe.get_doc(DOCTYPE, name)
-	data = doc.as_dict()
-	data["elapsed_seconds"] = _live_elapsed(doc)
-	return data
+	return _session_payload(frappe.get_doc(DOCTYPE, name))
 
 
 def list_running_sessions(company: str | None = None) -> list[dict]:
@@ -59,9 +57,16 @@ def list_running_sessions(company: str | None = None) -> list[dict]:
 	out = []
 	for row in rows:
 		doc = frappe._dict(row)
-		doc.elapsed_seconds = _live_elapsed(doc)
-		out.append(doc)
+		payload = dict(row)
+		payload["elapsed_seconds"] = _live_elapsed(doc)
+		out.append(payload)
 	return out
+
+
+def _session_payload(doc) -> dict:
+	data = doc.as_dict()
+	data["elapsed_seconds"] = _live_elapsed(doc)
+	return data
 
 
 def _live_elapsed(doc) -> float:
@@ -80,17 +85,17 @@ def start_session(
 ) -> dict:
 	user = user or frappe.session.user
 	existing = get_active_session(user)
-	if existing and existing.status == "Running":
-		if task and existing.task == task:
+	if existing and existing.get("status") == "Running":
+		if task and existing.get("task") == task:
 			return existing
 		frappe.throw(_("You already have a running session. Pause or Next first."))
 
-	if existing and existing.status == "Paused" and task and existing.task == task:
-		return resume_session(existing.name)
+	if existing and existing.get("status") == "Paused" and task and existing.get("task") == task:
+		return resume_session(existing["name"])
 
 	# if paused on different task, stop it first (flush)
-	if existing and existing.status == "Paused":
-		stop_session(existing.name, flush=True)
+	if existing and existing.get("status") == "Paused":
+		stop_session(existing["name"], flush=True)
 
 	now = now_datetime()
 	emp = get_employee_for_user(user)
@@ -101,6 +106,7 @@ def start_session(
 	if project and not company:
 		company = frappe.db.get_value("Project", project, "company")
 	company = company or get_company_for_user(user)
+	activity_type = activity_type or get_default_activity_type()
 
 	doc = frappe.get_doc(
 		{
@@ -110,7 +116,7 @@ def start_session(
 			"company": company,
 			"project": project,
 			"task": task,
-			"activity_type": activity_type or "Execution",
+			"activity_type": activity_type,
 			"status": "Running",
 			"started_on": now,
 			"duration_seconds": 0,
@@ -118,7 +124,7 @@ def start_session(
 	)
 	doc.insert(ignore_permissions=True)
 	frappe.db.commit()
-	return doc.as_dict()
+	return _session_payload(doc)
 
 
 def pause_session(name: str | None = None, user: str | None = None) -> dict:
@@ -132,7 +138,7 @@ def pause_session(name: str | None = None, user: str | None = None) -> dict:
 	doc.status = "Paused"
 	doc.save(ignore_permissions=True)
 	frappe.db.commit()
-	return doc.as_dict()
+	return _session_payload(doc)
 
 
 def resume_session(name: str, user: str | None = None) -> dict:
@@ -153,7 +159,7 @@ def resume_session(name: str, user: str | None = None) -> dict:
 	doc.status = "Running"
 	doc.save(ignore_permissions=True)
 	frappe.db.commit()
-	return doc.as_dict()
+	return _session_payload(doc)
 
 
 def stop_session(name: str | None = None, *, flush: bool = True, user: str | None = None) -> dict:
@@ -168,7 +174,7 @@ def stop_session(name: str | None = None, *, flush: bool = True, user: str | Non
 	if flush:
 		_flush_to_timesheet(doc)
 	frappe.db.commit()
-	return doc.as_dict()
+	return _session_payload(doc)
 
 
 def next_session(
@@ -178,11 +184,11 @@ def next_session(
 	activity_type: str | None = None,
 	user: str | None = None,
 ) -> dict:
-	"""Stop/pause current (flush) and start the next task — previous never stays Running."""
+	"""Stop current (flush) and start the next task — previous never stays Running."""
 	user = user or frappe.session.user
 	active = get_active_session(user)
 	if active:
-		stop_session(active.name, flush=True, user=user)
+		stop_session(active["name"], flush=True, user=user)
 	return start_session(task=task, project=project, activity_type=activity_type, user=user)
 
 
@@ -191,7 +197,7 @@ def _get_owned_session(name: str | None, user: str):
 		active = get_active_session(user)
 		if not active:
 			frappe.throw(_("No active session."))
-		name = active.name
+		name = active["name"]
 	doc = frappe.get_doc(DOCTYPE, name)
 	if doc.user != user and "System Manager" not in frappe.get_roles(user) and user != "Administrator":
 		frappe.throw(_("Not your session."), frappe.PermissionError)
@@ -215,6 +221,13 @@ def _flush_to_timesheet(doc) -> None:
 		frappe.log_error("Tracker: no Employee for timesheet flush", doc.name)
 		return
 	company = doc.company or get_company_for_user(doc.user)
+	activity_type = doc.activity_type or get_default_activity_type()
+	_ensure_activity_type(activity_type)
+
+	to_time = get_datetime(doc.ended_on) if doc.ended_on else now_datetime()
+	# Window matches accumulated duration (pause/resume safe)
+	from_time = to_time - timedelta(seconds=float(doc.duration_seconds or 0))
+
 	ts = frappe.get_doc(
 		{
 			"doctype": "Timesheet",
@@ -223,9 +236,9 @@ def _flush_to_timesheet(doc) -> None:
 			"parent_project": doc.project,
 			"time_logs": [
 				{
-					"activity_type": doc.activity_type or "Execution",
-					"from_time": doc.started_on,
-					"to_time": doc.ended_on or now_datetime(),
+					"activity_type": activity_type,
+					"from_time": from_time,
+					"to_time": to_time,
 					"hours": hours,
 					"project": doc.project,
 					"task": doc.task,
@@ -237,3 +250,16 @@ def _flush_to_timesheet(doc) -> None:
 	)
 	ts.insert(ignore_permissions=True)
 	doc.db_set("timesheet", ts.name, update_modified=False)
+
+
+def _ensure_activity_type(name: str) -> None:
+	if not name:
+		return
+	if frappe.db.exists("Activity Type", name):
+		return
+	try:
+		frappe.get_doc({"doctype": "Activity Type", "activity_type": name}).insert(
+			ignore_permissions=True
+		)
+	except Exception:
+		pass

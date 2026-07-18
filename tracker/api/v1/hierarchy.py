@@ -19,15 +19,25 @@ from tracker.setup.demo_org import seed_demo_org
 
 @frappe.whitelist()
 def my_tree():
+	"""Assignable people: self + subordinates (for assign pickers)."""
 	user = frappe.session.user
 	emp = get_employee_for_user(user)
 	subs = sorted(get_subordinate_users(user))
+	people = []
+	seen = set()
+	for u in [user, *subs]:
+		if not u or u in seen:
+			continue
+		seen.add(u)
+		full_name = frappe.db.get_value("User", u, "full_name") or u
+		people.append({"user": u, "full_name": full_name, "is_self": u == user})
 	return ok(
 		{
 			"user": user,
 			"employee": emp,
 			"org_role": get_org_role(emp),
 			"subordinates": subs,
+			"people": people,
 		}
 	)
 
@@ -35,9 +45,9 @@ def my_tree():
 @frappe.whitelist()
 def org_tree():
 	"""Full active Employee tree for Org Setup (company-scoped)."""
-	company = frappe.defaults.get_user_default("Company") or frappe.db.get_single_value(
-		"Global Defaults", "default_company"
-	)
+	from tracker.permissions.hierarchy import get_company_for_user
+
+	company = get_company_for_user()
 	filters: dict = {"status": "Active"}
 	if company:
 		filters["company"] = company

@@ -20,6 +20,15 @@ Minimal ERPNext domain app for company-scoped projects, tasks (with subtasks via
 
 `Tracker Top` → `Tracker Sub` → `Tracker Worker` (assign only down the Employee tree).
 
+## Site (local + cloud)
+
+**Always** use site name: **`erp.zatgo.online`** (never `frontend`).
+
+| Env | Backend container | Desk |
+|-----|-------------------|------|
+| Local | `erpnext-backend-1` | local frontend port |
+| Cloud | `frappe_docker-backend-1` | https://erp.zatgo.online |
+
 ## Install
 
 ```bash
@@ -29,40 +38,40 @@ bench --site erp.zatgo.online migrate
 bench --site erp.zatgo.online clear-cache
 ```
 
-### Docker / frappe_docker important
-
-After `install-app` (or `get-app`), ensure the Python package is visible to Gunicorn workers:
+### Docker deploy / update (locked path)
 
 ```bash
 # inside backend container
+cd /home/frappe/frappe-bench/apps/tracker && git pull
 cd /home/frappe/frappe-bench
 ./env/bin/pip install -e apps/tracker
-# then restart backend (and optionally queue/websocket)
-docker restart <backend-container>
+bench --site erp.zatgo.online migrate
 bench --site erp.zatgo.online clear-cache
+# then restart backend so Gunicorn picks up the package
+docker restart <backend-container>
 ```
 
-Without the editable install + restart, Desk may return **Internal Server Error** with `ModuleNotFoundError: No module named 'tracker'`.
-
-Default site name (local + cloud): **`erp.zatgo.online`**.
+Without `pip install -e` + restart, Desk may return **Internal Server Error** with `ModuleNotFoundError: No module named 'tracker'`.
 
 ## Desk
 
 | Route | Purpose |
 |-------|---------|
-| `/desk/tracker-workbench` | My/Team tasks, tickets, Start/Pause/Next/Stop, create/assign, who is running |
+| `/desk/tracker-workbench` | My/Team tasks, tickets, Start/Pause/Next/Stop, create/assign from org tree, who is running |
 | `/desk/tracker-org` | Org tree, roles, reports_to, demo seed |
-| Workspace **Tracker** | Shortcuts to Workbench, Org, Project, Task, Issue, Activity, Settings |
+| Workspace Sidebar **Tracker** | Shortcuts + Desktop Icon (ensured on migrate) |
+| **Tracker Settings** | Default company + default activity type |
 
 ## Smoke checklist
 
-1. Desk login → Workspace **Tracker** visible  
+1. Desk login → **Tracker** icon / sidebar visible  
 2. Org Setup → Seed demo (or set `reports_to` + roles)  
-3. Workbench → New Task → Assign (down-tree only)  
+3. Workbench → New Task → Assign from org picker (down-tree only)  
 4. Start → Pause → Next → Stop; Timesheet row created on stop/next  
-5. Tickets tab → New Ticket  
-6. Who is Running shows active timers  
+5. Tickets tab → New Ticket + assign  
+6. Who is Running shows active timers + elapsed  
+7. Tracker Settings → set company / activity type; new Start uses them  
 
 ## Clients
 
-Flutter / web / desktop thin shells call `tracker.api.v1.*` (auth + tasks + activity + create/assign).
+Flutter / web / desktop: create/assign from `hierarchy.my_tree`, tickets assign, Start/Pause/Next/Stop + elapsed, who-is-running list on dashboard.

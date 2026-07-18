@@ -25,8 +25,18 @@ def get_org_role(employee: str | None = None, user: str | None = None) -> str | 
 def get_company_for_user(user: str | None = None) -> str | None:
 	emp = get_employee_for_user(user)
 	if emp:
-		return frappe.db.get_value("Employee", emp, "company")
-	# fallback: first default company
+		company = frappe.db.get_value("Employee", emp, "company")
+		if company:
+			return company
+	# Tracker Settings → user default → Global Defaults
+	try:
+		from tracker.tracker.doctype.tracker_settings.tracker_settings import get_default_company
+
+		settings_company = get_default_company()
+		if settings_company:
+			return settings_company
+	except Exception:
+		pass
 	return frappe.defaults.get_user_default("Company") or frappe.db.get_single_value(
 		"Global Defaults", "default_company"
 	)
@@ -82,6 +92,8 @@ def can_assign_to(assigner: str, assignee: str) -> bool:
 def assert_can_assign(assigner: str, assignee: str) -> None:
 	if not can_assign_to(assigner, assignee):
 		frappe.throw(
-			_("You can only assign to yourself or people below you in the org tree."),
+			_(
+				"Cannot assign to {0}. You can only assign to yourself or people below you in the org tree."
+			).format(assignee),
 			frappe.PermissionError,
 		)

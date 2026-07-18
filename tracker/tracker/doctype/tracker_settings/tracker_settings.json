@@ -23,8 +23,9 @@
   {
    "default": "Execution",
    "fieldname": "default_activity_type",
-   "fieldtype": "Data",
-   "label": "Default Activity Type"
+   "fieldtype": "Link",
+   "label": "Default Activity Type",
+   "options": "Activity Type"
   }
  ],
  "issingle": 1,
