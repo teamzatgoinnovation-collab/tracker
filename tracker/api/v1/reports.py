@@ -29,7 +29,10 @@ def _parse_dates(from_date, to_date):
 	if not from_date or not to_date:
 		return None, None, fail("bad_request", "from_date and to_date required")
 	try:
-		return getdate(from_date), getdate(to_date), None
+		fd, td = getdate(from_date), getdate(to_date)
+		if fd > td:
+			return None, None, fail("bad_request", "from_date must be on or before to_date")
+		return fd, td, None
 	except Exception:
 		return None, None, fail("bad_request", "invalid date")
 
