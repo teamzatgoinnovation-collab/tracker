@@ -122,6 +122,7 @@ def assign(doctype: str, name: str, users: str | None = None, user: str | None =
 	elif doctype == "Issue":
 		from frappe.desk.form.assign_to import add as assign_add
 		from tracker.permissions.hierarchy import assert_can_assign
+		from tracker.services.notify import notify_assigned
 
 		for u in targets:
 			assert_can_assign(frappe.session.user, u)
@@ -133,6 +134,7 @@ def assign(doctype: str, name: str, users: str | None = None, user: str | None =
 					"description": "Assigned via Tracker",
 				}
 			)
+		notify_assigned(doctype="Issue", name=name, users=targets)
 	else:
 		return fail("unsupported", f"Cannot assign {doctype}")
 	return ok({"doctype": doctype, "name": name, "users": targets})

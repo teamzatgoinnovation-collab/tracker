@@ -53,11 +53,14 @@ docker restart <backend-container>
 
 Without `pip install -e` + restart, Desk may return **Internal Server Error** with `ModuleNotFoundError: No module named 'tracker'`.
 
+Hub push also needs **zatgo_core** installed and migrated (ZG Device Token + devices API).
+
 ## Desk
 
 | Route | Purpose |
 |-------|---------|
-| `/desk/tracker-workbench` | My/Team tasks, tickets, Start/Pause/Next/Stop, create/assign from org tree, who is running |
+| `/desk/tracker-workbench` | My/Team filters, deep links, presets, tickets, Start/Pause/Next/Stop, assign, who is running |
+| `/desk/tracker-hours` | Hours by project / user from Timesheet (date range) |
 | `/desk/tracker-org` | Org tree, roles, reports_to, demo seed |
 | Workspace Sidebar **Tracker** | Shortcuts + Desktop Icon (ensured on migrate) |
 | **Tracker Settings** | Default company + default activity type |
@@ -71,7 +74,10 @@ Without `pip install -e` + restart, Desk may return **Internal Server Error** wi
 5. Tickets tab → New Ticket + assign  
 6. Who is Running shows active timers + elapsed  
 7. Tracker Settings → set company / activity type; new Start uses them  
+8. Workbench filters → `?scope=&project=&status=` deep link + Save filter preset  
+9. Hours page → date range shows Timesheet aggregates  
+10. Assign → Notification Log for assignee (FCM if ZG Notification Settings `push_enabled` + `fcm_server_key`)  
 
 ## Clients
 
-Flutter / web / desktop: create/assign from `hierarchy.my_tree`, tickets assign, Start/Pause/Next/Stop + elapsed, who-is-running list on dashboard.
+Flutter / web / desktop: create/assign from `hierarchy.my_tree`, tickets assign, Start/Pause/Next/Stop + elapsed, who-is-running, `/tasks` query filters + presets, `/reports` Hours page. Flutter registers FCM via `zatgo_core.api.v1.devices.register_token`.

@@ -9,6 +9,7 @@ from tracker.permissions.roles import ensure_role_permissions, ensure_roles
 
 SIDEBAR_ITEMS = [
 	{"label": "Workbench", "link_type": "Page", "link_to": "tracker-workbench", "type": "Link", "icon": "list"},
+	{"label": "Hours", "link_type": "Page", "link_to": "tracker-hours", "type": "Link", "icon": "chart"},
 	{"label": "Org Setup", "link_type": "Page", "link_to": "tracker-org", "type": "Link", "icon": "organization"},
 	{"label": "Project", "link_type": "DocType", "link_to": "Project", "type": "Link", "icon": "project"},
 	{"label": "Task", "link_type": "DocType", "link_to": "Task", "type": "Link", "icon": "list-checks"},

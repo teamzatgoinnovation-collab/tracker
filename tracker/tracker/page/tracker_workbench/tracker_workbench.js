@@ -29,6 +29,12 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					<option value="team">${__("Team")}</option>
 					<option value="both">${__("Mine + Team")}</option>
 				</select>
+				<input class="form-control tracker-project" style="width:10rem" placeholder="${__("Project")}" />
+				<input class="form-control tracker-status" style="width:8rem" placeholder="${__("Status")}" />
+				<select class="form-control tracker-preset" style="width:auto">
+					<option value="">${__("Presets…")}</option>
+				</select>
+				<button class="btn btn-default btn-sm tracker-btn-save-filter">${__("Save filter")}</button>
 				<button class="btn btn-default btn-sm tracker-btn-new-project">${__("New Project")}</button>
 				<button class="btn btn-default btn-sm tracker-btn-new-task">${__("New Task")}</button>
 				<button class="btn btn-default btn-sm tracker-btn-new-ticket">${__("New Ticket")}</button>
@@ -121,12 +127,80 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 
 	function scopeArgs() {
 		const scope = $root.find(".tracker-scope").val();
-		return {
+		const project = ($root.find(".tracker-project").val() || "").trim();
+		const status = ($root.find(".tracker-status").val() || "").trim();
+		const args = {
 			mine: scope === "mine" || scope === "both" ? 1 : 0,
 			team: scope === "team" || scope === "both" ? 1 : 0,
 			page_size: 100,
 			tree: 1,
 		};
+		if (project) args.project = project;
+		if (status) args.status = status;
+		return args;
+	}
+
+	function currentFilter() {
+		return {
+			scope: $root.find(".tracker-scope").val() || "mine",
+			project: ($root.find(".tracker-project").val() || "").trim() || null,
+			status: ($root.find(".tracker-status").val() || "").trim() || null,
+		};
+	}
+
+	function applyFilter(f) {
+		if (!f) return;
+		if (f.scope) $root.find(".tracker-scope").val(f.scope);
+		$root.find(".tracker-project").val(f.project || "");
+		$root.find(".tracker-status").val(f.status || "");
+	}
+
+	function syncRoute() {
+		const f = currentFilter();
+		const opts = { scope: f.scope };
+		if (f.project) opts.project = f.project;
+		if (f.status) opts.status = f.status;
+		frappe.route_options = opts;
+		try {
+			const q = Object.keys(opts)
+				.map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(opts[k])}`)
+				.join("&");
+			if (window.history && window.history.replaceState) {
+				const base = window.location.pathname + window.location.hash.split("?")[0];
+				window.history.replaceState(null, "", `${base}?${q}`);
+			}
+		} catch (e) {
+			/* ignore */
+		}
+		frappe.call({
+			method: "tracker.api.v1.filters.set_last",
+			args: f,
+		});
+	}
+
+	function renderPresets(presets) {
+		const $sel = $root.find(".tracker-preset");
+		$sel.find("option:not(:first)").remove();
+		(presets || []).forEach((p) => {
+			$sel.append(
+				`<option value="${frappe.utils.escape_html(p.id || p.name)}">${frappe.utils.escape_html(
+					p.name || p.id
+				)}</option>`
+			);
+		});
+		$sel.data("presets", presets || []);
+	}
+
+	function loadPresetsThen(cb) {
+		frappe.call({
+			method: "tracker.api.v1.filters.get_presets",
+			callback: (r) => {
+				const m = r.message || {};
+				const data = m.success === false ? {} : m.data || {};
+				renderPresets(data.presets || []);
+				if (cb) cb(data);
+			},
+		});
 	}
 
 	function renderTasks() {
@@ -218,10 +292,17 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 
 	function load() {
 		const args = scopeArgs();
+		const ticketArgs = {
+			page_size: 100,
+			mine: args.mine,
+			team: args.team,
+		};
+		if (args.project) ticketArgs.project = args.project;
+		if (args.status) ticketArgs.status = args.status;
 		return Promise.all([
 			frappe.call("tracker.api.v1.tasks.list_tasks", args),
 			frappe.call("tracker.api.v1.activity.active"),
-			frappe.call("tracker.api.v1.tickets.list_tickets", { page_size: 100 }),
+			frappe.call("tracker.api.v1.tickets.list_tickets", ticketArgs),
 			frappe.call("tracker.api.v1.activity.running_now"),
 			frappe.call("tracker.api.v1.hierarchy.my_tree"),
 		]).then(([tasksRes, activeRes, ticketsRes, runningRes, treeRes]) => {
@@ -296,7 +377,48 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		callActivity("tracker.api.v1.activity.next", { task: state.selected });
 	});
 
-	$root.find(".tracker-scope").on("change", () => load());
+	$root.find(".tracker-scope, .tracker-project, .tracker-status").on("change", () => {
+		syncRoute();
+		load();
+	});
+	$root.find(".tracker-project, .tracker-status").on("keydown", (e) => {
+		if (e.key === "Enter") {
+			syncRoute();
+			load();
+		}
+	});
+	$root.find(".tracker-preset").on("change", function () {
+		const id = $(this).val();
+		const presets = $(this).data("presets") || [];
+		const p = presets.find((x) => x.id === id || x.name === id);
+		if (p) {
+			applyFilter(p);
+			syncRoute();
+			load();
+		}
+	});
+	$root.find(".tracker-btn-save-filter").on("click", () => {
+		frappe.prompt(
+			[{ fieldname: "name", label: __("Filter name"), fieldtype: "Data", reqd: 1 }],
+			(values) => {
+				const f = currentFilter();
+				frappe.call({
+					method: "tracker.api.v1.filters.save_preset",
+					args: { name: values.name, ...f },
+					callback: (r) => {
+						const m = r.message || {};
+						if (m.success === false) {
+							frappe.msgprint((m.error && m.error.message) || __("Save failed"));
+							return;
+						}
+						renderPresets((m.data && m.data.presets) || []);
+						frappe.show_alert({ message: __("Filter saved"), indicator: "green" });
+					},
+				});
+			},
+			__("Save filter")
+		);
+	});
 	$root.find(".tracker-tabs .nav-link").on("click", function (e) {
 		e.preventDefault();
 		showTab($(this).data("tab"));
@@ -437,5 +559,25 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 	});
 
 	page.set_primary_action(__("Refresh"), () => load());
-	load();
+
+	// Deep link: route_options or query → else last preset
+	const fromRoute = frappe.route_options || {};
+	const params = new URLSearchParams((window.location.hash.split("?")[1] || window.location.search || "").replace(/^\?/, ""));
+	const initial = {
+		scope: fromRoute.scope || params.get("scope") || null,
+		project: fromRoute.project || params.get("project") || null,
+		status: fromRoute.status || params.get("status") || null,
+	};
+	loadPresetsThen((data) => {
+		if (initial.scope || initial.project || initial.status) {
+			applyFilter({
+				scope: initial.scope || "mine",
+				project: initial.project,
+				status: initial.status,
+			});
+		} else if (data.last) {
+			applyFilter(data.last);
+		}
+		load();
+	});
 };

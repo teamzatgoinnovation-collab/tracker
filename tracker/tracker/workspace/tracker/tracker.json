@@ -16,7 +16,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Work",
-   "link_count": 3,
+   "link_count": 4,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -26,6 +26,16 @@
    "label": "Workbench",
    "link_count": 0,
    "link_to": "tracker-workbench",
+   "link_type": "Page",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Hours",
+   "link_count": 0,
+   "link_to": "tracker-hours",
    "link_type": "Page",
    "onboard": 1,
    "type": "Link"

@@ -11,6 +11,8 @@ from tracker.permissions.hierarchy import assert_can_assign
 
 
 def assign_task(task: str, users: list[str], assigner: str | None = None) -> None:
+	from tracker.services.notify import notify_assigned
+
 	assigner = assigner or frappe.session.user
 	for user in users:
 		assert_can_assign(assigner, user)
@@ -22,6 +24,7 @@ def assign_task(task: str, users: list[str], assigner: str | None = None) -> Non
 				"description": f"Assigned via Tracker by {assigner}",
 			}
 		)
+	notify_assigned(doctype="Task", name=task, users=users, assigner=assigner)
 
 
 def assign_project_member(project: str, user: str, assigner: str | None = None) -> None:

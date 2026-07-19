@@ -17,7 +17,11 @@ def list_tickets(
 	page_size: int = 50,
 	project: str | None = None,
 	status: str | None = None,
+	mine: int = 0,
+	team: int = 0,
 ):
+	from tracker.permissions.hierarchy import get_subordinate_users
+
 	page = int(page or 1)
 	page_size = min(int(page_size or 50), 200)
 	filters: dict = {}
@@ -28,11 +32,32 @@ def list_tickets(
 		filters["project"] = project
 	if status:
 		filters["status"] = status
-	total = frappe.db.count("Issue", filters)
+
+	or_filters = None
+	if int(mine or 0) and int(team or 0):
+		users = {frappe.session.user} | get_subordinate_users()
+		or_filters = [["_assign", "like", f"%{u}%"] for u in users]
+	elif int(mine or 0):
+		filters["_assign"] = ("like", f"%{frappe.session.user}%")
+	elif int(team or 0):
+		users = get_subordinate_users()
+		if not users:
+			return paginated([], page=page, page_size=page_size, total=0)
+		or_filters = [["_assign", "like", f"%{u}%"] for u in users]
+
+	total = len(
+		frappe.get_all(
+			"Issue",
+			filters=filters,
+			or_filters=or_filters,
+			pluck="name",
+		)
+	)
 	rows = frappe.get_all(
 		"Issue",
 		filters=filters,
-		fields=["name", "subject", "status", "priority", "project", "raised_by", "modified"],
+		or_filters=or_filters,
+		fields=["name", "subject", "status", "priority", "project", "raised_by", "modified", "_assign"],
 		order_by="modified desc",
 		start=(page - 1) * page_size,
 		page_length=page_size,
@@ -75,21 +100,28 @@ def create_ticket(
 		}
 	)
 	doc.insert()
-	for user in parse_users(assign_to):
+	from tracker.services.notify import notify_assigned
+
+	assigned = parse_users(assign_to)
+	for user in assigned:
 		assert_can_assign(frappe.session.user, user)
 		assign_add(
 			{
 				"assign_to": [user],
 				"doctype": "Issue",
 				"name": doc.name,
-				"description": f"Ticket assigned via Tracker",
+				"description": "Ticket assigned via Tracker",
 			}
 		)
+	if assigned:
+		notify_assigned(doctype="Issue", name=doc.name, users=assigned)
 	return ok(frappe.get_doc("Issue", doc.name).as_dict())
 
 
 @frappe.whitelist()
 def assign(name: str, users: str | None = None, user: str | None = None):
+	from tracker.services.notify import notify_assigned
+
 	targets = parse_users(users) or parse_users(user)
 	if not name or not targets:
 		return fail("bad_request", "name and user(s) required")
@@ -103,4 +135,5 @@ def assign(name: str, users: str | None = None, user: str | None = None):
 				"description": "Ticket assigned via Tracker",
 			}
 		)
+	notify_assigned(doctype="Issue", name=name, users=targets)
 	return ok({"issue": name, "users": targets})
