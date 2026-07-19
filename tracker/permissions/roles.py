@@ -43,6 +43,9 @@ _PERM = {
 		TRACKER_SUB: (1, 0, 0, 0, 0, 0),
 		TRACKER_WORKER: (1, 0, 0, 0, 0, 0),
 	},
+	"Tracker Settings": {
+		TRACKER_TOP: (1, 1, 0, 0, 0, 0),
+	},
 }
 
 

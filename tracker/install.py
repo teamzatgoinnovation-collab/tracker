@@ -32,6 +32,35 @@ SIDEBAR_ITEMS = [
 ]
 
 
+def _sidebar_items_match(existing_items, expected_items: list[dict]) -> bool:
+	if len(existing_items) != len(expected_items):
+		return False
+	for expected, row in zip(expected_items, existing_items):
+		if (
+			row.label,
+			row.link_to,
+			row.link_type,
+			row.type,
+		) != (
+			expected["label"],
+			expected["link_to"],
+			expected["link_type"],
+			expected["type"],
+		):
+			return False
+	return True
+
+
+def _sync_sidebar_items(sidebar) -> bool:
+	"""Replace sidebar rows when labels/links drift from SIDEBAR_ITEMS."""
+	if _sidebar_items_match(sidebar.items, SIDEBAR_ITEMS):
+		return False
+	sidebar.items = []
+	for item in SIDEBAR_ITEMS:
+		sidebar.append("items", item)
+	return True
+
+
 def after_install() -> None:
 	ensure_roles()
 	_ensure_employee_custom_fields()
@@ -126,9 +155,7 @@ def _ensure_desk_entry() -> None:
 			if sb.module != "Tracker":
 				sb.module = "Tracker"
 				changed = True
-			if not sb.items:
-				for item in SIDEBAR_ITEMS:
-					sb.append("items", item)
+			if _sync_sidebar_items(sb):
 				changed = True
 			if changed:
 				sb.save(ignore_permissions=True)
