@@ -27,7 +27,16 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 			method: "tracker.api.v1.hierarchy.org_tree",
 			freeze: true,
 			callback: (r) => {
-				const data = (r.message && r.message.data) || {};
+				const msg = r.message || {};
+				if (msg.success === false) {
+					frappe.msgprint({
+						title: __("Org tree failed"),
+						indicator: "red",
+						message: (msg.error && msg.error.message) || __("Failed to load org tree"),
+					});
+					return;
+				}
+				const data = msg.data || {};
 				const rows = data.employees || [];
 				if (!rows.length) {
 					$tree.html(`<p class="text-muted">${__("No active employees.")}</p>`);
@@ -104,7 +113,16 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 						tracker_role: values.tracker_role || "",
 					},
 					freeze: true,
-					callback: () => {
+					callback: (r) => {
+						const msg = r.message || {};
+						if (msg.success === false) {
+							frappe.msgprint({
+								title: __("Save failed"),
+								indicator: "red",
+								message: (msg.error && msg.error.message) || __("Failed to save org"),
+							});
+							return;
+						}
 						d.hide();
 						load();
 					},
@@ -125,8 +143,16 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 					method: "tracker.api.v1.hierarchy.seed_demo",
 					freeze: true,
 					callback: (r) => {
+						const msg = r.message || {};
+						if (msg.success === false) {
+							frappe.msgprint({
+								title: __("Seed failed"),
+								indicator: "red",
+								message: (msg.error && msg.error.message) || __("Failed to seed demo org"),
+							});
+							return;
+						}
 						frappe.show_alert({ message: __("Demo org seeded"), indicator: "green" });
-						console.log(r.message);
 						load();
 					},
 				});
@@ -146,7 +172,16 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 						freeze: true,
 						freeze_message: __("Seeding demo work data…"),
 						callback: (r) => {
-							const data = (r.message && r.message.data) || {};
+							const msg = r.message || {};
+							if (msg.success === false) {
+								frappe.msgprint({
+									title: __("Seed failed"),
+									indicator: "red",
+									message: (msg.error && msg.error.message) || __("Failed to seed demo work"),
+								});
+								return;
+							}
+							const data = msg.data || {};
 							frappe.msgprint({
 								title: __("Demo work seeded"),
 								indicator: "green",

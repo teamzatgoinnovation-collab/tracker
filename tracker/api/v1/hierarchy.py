@@ -89,9 +89,9 @@ def update_employee_org(
 		doc.reports_to = reports_to or None
 	doc.save(ignore_permissions=True)
 
-	if tracker_role and doc.user_id:
+	if tracker_role is not None and doc.user_id:
 		user = frappe.get_doc("User", doc.user_id)
-		# remove other Tracker roles then add selected
+		# remove other Tracker roles then add selected (empty clears all)
 		user.roles = [r for r in user.roles if r.role not in TRACKER_ROLES]
 		if tracker_role in TRACKER_ROLES:
 			user.append_roles(tracker_role)
