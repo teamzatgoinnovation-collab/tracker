@@ -9,7 +9,6 @@ from frappe import _
 from frappe.utils import add_days, get_datetime, now_datetime, today
 
 from tracker.setup.demo_org import DEMO_USERS, seed_demo_org
-from tracker.services.assign import assign_task
 from tracker.tracker.doctype.tracker_settings.tracker_settings import get_default_activity_type
 
 PROJECT_NAME = "Tracker Demo Project"
@@ -21,6 +20,8 @@ def seed_demo_data(company: str | None = None) -> dict:
 	if "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator":
 		frappe.throw(_("Only System Manager can seed demo data."), frappe.PermissionError)
 
+	# Assign-to may try to email; mute so seed works without Email Account
+	frappe.flags.mute_emails = True
 	org = seed_demo_org(company=company)
 	company = org["company"]
 	_ensure_activity_type("Execution")
@@ -112,6 +113,39 @@ def _ensure_project(company: str, members: list[str]) -> str:
 	return name
 
 
+def _assign(doctype: str, name: str, user: str) -> None:
+	from frappe.desk.form.assign_to import add as assign_add
+
+	try:
+		assign_add(
+			{
+				"assign_to": [user],
+				"doctype": doctype,
+				"name": name,
+				"description": "Demo assign",
+				"notify": 0,
+			},
+			ignore_permissions=True,
+		)
+	except Exception:
+		# Fallback: ToDo only (no email)
+		if not frappe.db.exists(
+			"ToDo",
+			{"reference_type": doctype, "reference_name": name, "allocated_to": user, "status": "Open"},
+		):
+			frappe.get_doc(
+				{
+					"doctype": "ToDo",
+					"allocated_to": user,
+					"reference_type": doctype,
+					"reference_name": name,
+					"description": f"Demo assign {doctype} {name}",
+					"status": "Open",
+					"priority": "Medium",
+				}
+			).insert(ignore_permissions=True)
+
+
 def _ensure_tasks(company: str, project: str, worker: str, sub: str) -> dict:
 	"""Create parent + child tasks; assign worker/sub."""
 	out = {}
@@ -144,19 +178,7 @@ def _ensure_tasks(company: str, project: str, worker: str, sub: str) -> dict:
 			)
 			doc.insert(ignore_permissions=True)
 			name = doc.name
-			try:
-				assign_task(name, [assignee])
-			except Exception:
-				from frappe.desk.form.assign_to import add as assign_add
-
-				assign_add(
-					{
-						"assign_to": [assignee],
-						"doctype": "Task",
-						"name": name,
-						"description": "Demo assign",
-					}
-				)
+			_assign("Task", name, assignee)
 		by_subject[subject] = name
 		out[subject] = name
 
@@ -196,16 +218,7 @@ def _ensure_tickets(company: str, project: str, worker: str, sub: str) -> list[s
 			)
 			doc.insert(ignore_permissions=True)
 			name = doc.name
-			from frappe.desk.form.assign_to import add as assign_add
-
-			assign_add(
-				{
-					"assign_to": [assignee],
-					"doctype": "Issue",
-					"name": name,
-					"description": "Demo ticket assign",
-				}
-			)
+			_assign("Issue", name, assignee)
 		names.append(name)
 	return names
 
