@@ -108,6 +108,11 @@ def start_session(
 	company = company or get_company_for_user(user)
 	activity_type = activity_type or get_default_activity_type()
 
+	if task:
+		from tracker.services.review import mark_working_on_start
+
+		mark_working_on_start(task, user=user)
+
 	doc = frappe.get_doc(
 		{
 			"doctype": DOCTYPE,

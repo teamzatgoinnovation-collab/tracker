@@ -35,20 +35,23 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					<option value="">${__("Presets…")}</option>
 				</select>
 				<button class="btn btn-default btn-sm tracker-btn-save-filter">${__("Save filter")}</button>
-				<button class="btn btn-default btn-sm tracker-btn-new-project">${__("New Project")}</button>
-				<button class="btn btn-default btn-sm tracker-btn-new-task">${__("New Task")}</button>
-				<button class="btn btn-default btn-sm tracker-btn-new-ticket">${__("New Ticket")}</button>
-				<button class="btn btn-default btn-sm tracker-btn-assign">${__("Assign")}</button>
+				<button class="btn btn-default btn-sm tracker-btn-new-project tracker-mgr">${__("New Project")}</button>
+				<button class="btn btn-default btn-sm tracker-btn-new-task tracker-mgr">${__("New Task")}</button>
+				<button class="btn btn-default btn-sm tracker-btn-new-ticket tracker-mgr">${__("New Ticket")}</button>
+				<button class="btn btn-default btn-sm tracker-btn-assign tracker-mgr">${__("Assign")}</button>
+				<button class="btn btn-default btn-sm tracker-btn-submit-ts tracker-mgr">${__("Submit team timesheets")}</button>
 			</div>
 
 			<ul class="nav nav-tabs tracker-tabs mb-2">
 				<li class="nav-item"><a class="nav-link active" data-tab="tasks" href="#">${__("Tasks")}</a></li>
 				<li class="nav-item"><a class="nav-link" data-tab="tickets" href="#">${__("Tickets")}</a></li>
 				<li class="nav-item"><a class="nav-link" data-tab="running" href="#">${__("Who is Running")}</a></li>
+				<li class="nav-item tracker-review-tab" style="display:none"><a class="nav-link" data-tab="review" href="#">${__("Review")}</a></li>
 			</ul>
 			<div class="tracker-panel tracker-tasks"></div>
 			<div class="tracker-panel tracker-tickets" style="display:none"></div>
 			<div class="tracker-panel tracker-running" style="display:none"></div>
+			<div class="tracker-panel tracker-review" style="display:none"></div>
 		</div>
 	`);
 
@@ -56,12 +59,19 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		tasks: [],
 		tickets: [],
 		running: [],
+		review: [],
 		selected: null,
 		selectedTicket: null,
 		active: null,
 		tab: "tasks",
 		elapsedTimer: null,
 		assignPeople: [],
+		caps: {
+			can_manage_work: true,
+			can_review: true,
+			can_submit_timesheets: true,
+			is_worker_only: false,
+		},
 	};
 
 	const $root = $(page.main);
@@ -70,10 +80,100 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 	const $tasks = $root.find(".tracker-tasks");
 	const $tickets = $root.find(".tracker-tickets");
 	const $running = $root.find(".tracker-running");
+	const $review = $root.find(".tracker-review");
 	const $start = $root.find(".tracker-btn-start");
 	const $pause = $root.find(".tracker-btn-pause");
 	const $next = $root.find(".tracker-btn-next");
 	const $stop = $root.find(".tracker-btn-stop");
+
+	function applyCapabilities() {
+		const canMgr = !!state.caps.can_manage_work;
+		const canReview = !!state.caps.can_review;
+		$root.find(".tracker-mgr").toggle(canMgr);
+		$root.find(".tracker-review-tab").toggle(canReview);
+		$root.find(".tracker-btn-submit-ts").toggle(!!state.caps.can_submit_timesheets);
+	}
+
+	function taskActionsHtml(t) {
+		const stage = t.stage || t.status || "";
+		const name = frappe.utils.escape_html(t.name);
+		let btns = "";
+		if (stage === "In Progress") {
+			btns += `<button class="btn btn-xs btn-primary tracker-act-ready" data-name="${name}">${__("Ready for Review")}</button> `;
+		}
+		if (stage === "Ready for Review" && state.caps.can_review) {
+			btns += `<button class="btn btn-xs btn-success tracker-act-approve" data-name="${name}">${__("Approve")}</button> `;
+			btns += `<button class="btn btn-xs btn-warning tracker-act-rework" data-name="${name}">${__("Rework")}</button> `;
+		}
+		if (stage === "Draft" && state.caps.can_manage_work) {
+			btns += `<button class="btn btn-xs btn-default tracker-act-assign-row" data-name="${name}">${__("Assign")}</button> `;
+		}
+		return btns;
+	}
+
+	function bindTaskActions($el) {
+		$el.find(".tracker-act-ready").on("click", function (e) {
+			e.stopPropagation();
+			const name = $(this).data("name");
+			frappe.call({
+				method: "tracker.api.v1.tasks.submit_for_review",
+				args: { name },
+				freeze: true,
+				callback: (r) => {
+					if (r.message && r.message.success === false) {
+						frappe.msgprint((r.message.error && r.message.error.message) || __("Failed"));
+						return;
+					}
+					load();
+				},
+			});
+		});
+		$el.find(".tracker-act-approve").on("click", function (e) {
+			e.stopPropagation();
+			const name = $(this).data("name");
+			frappe.call({
+				method: "tracker.api.v1.tasks.approve",
+				args: { name },
+				freeze: true,
+				callback: (r) => {
+					if (r.message && r.message.success === false) {
+						frappe.msgprint((r.message.error && r.message.error.message) || __("Failed"));
+						return;
+					}
+					frappe.show_alert({ message: __("Approved"), indicator: "green" });
+					load();
+				},
+			});
+		});
+		$el.find(".tracker-act-rework").on("click", function (e) {
+			e.stopPropagation();
+			const name = $(this).data("name");
+			frappe.prompt(
+				[{ fieldname: "note", label: __("Rework note"), fieldtype: "Small Text", reqd: 1 }],
+				(values) => {
+					frappe.call({
+						method: "tracker.api.v1.tasks.request_rework",
+						args: { name, note: values.note },
+						freeze: true,
+						callback: (r) => {
+							if (r.message && r.message.success === false) {
+								frappe.msgprint((r.message.error && r.message.error.message) || __("Failed"));
+								return;
+							}
+							load();
+						},
+					});
+				},
+				__("Request rework")
+			);
+		});
+		$el.find(".tracker-act-assign-row").on("click", function (e) {
+			e.stopPropagation();
+			state.selected = $(this).data("name");
+			state.tab = "tasks";
+			$root.find(".tracker-btn-assign").click();
+		});
+	}
 
 	function fmtElapsed(sec) {
 		sec = Math.max(0, Math.floor(sec || 0));
@@ -216,16 +316,18 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		const render = (t, depth) => {
 			const selected = state.selected === t.name ? "selected" : "";
 			const pad = depth * 16;
+			const stage = t.stage || t.status || "";
 			let html = `<div class="tracker-task-row ${selected}" data-name="${frappe.utils.escape_html(t.name)}" style="padding-left:${pad + 12}px">
 				<strong>${frappe.utils.escape_html(t.subject || t.name)}</strong>
-				<span class="text-muted"> · ${frappe.utils.escape_html(t.status || "")} · ${frappe.utils.escape_html(t.project || "")}</span>
+				<span class="badge badge-secondary" style="margin-left:6px">${frappe.utils.escape_html(stage)}</span>
+				<span class="text-muted"> · ${frappe.utils.escape_html(t.project || "")}</span>
+				<span class="tracker-row-actions" style="margin-left:8px">${taskActionsHtml(t)}</span>
 			</div>`;
 			(byParent[t.name] || []).forEach((c) => {
 				html += render(c, depth + 1);
 			});
 			return html;
 		};
-		// Prefer roots; if tree=1 returned only roots, children may be missing — list flat then
 		const roots = state.tasks.filter((t) => !t.parent_task);
 		let html = "";
 		if (roots.length) {
@@ -240,6 +342,30 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			$(this).addClass("selected");
 			refreshButtons();
 		});
+		bindTaskActions($tasks);
+	}
+
+	function renderReview() {
+		if (!state.review.length) {
+			$review.html(`<p class="text-muted">${__("No tasks waiting for review.")}</p>`);
+			return;
+		}
+		const rows = state.review
+			.map((t) => {
+				const stage = t.stage || "Ready for Review";
+				return `<div class="tracker-task-row" data-name="${frappe.utils.escape_html(t.name)}">
+					<strong>${frappe.utils.escape_html(t.subject || t.name)}</strong>
+					<span class="badge badge-warning" style="margin-left:6px">${frappe.utils.escape_html(stage)}</span>
+					<span class="text-muted"> · ${frappe.utils.escape_html(t.project || "")}</span>
+					<span class="tracker-row-actions" style="margin-left:8px">${taskActionsHtml(t)}</span>
+				</div>`;
+			})
+			.join("");
+		$review.html(rows);
+		$review.find(".tracker-task-row").on("click", function () {
+			state.selected = $(this).data("name");
+		});
+		bindTaskActions($review);
 	}
 
 	function renderTickets() {
@@ -288,6 +414,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		if (tab === "tasks") $tasks.show();
 		if (tab === "tickets") $tickets.show();
 		if (tab === "running") $running.show();
+		if (tab === "review") $review.show();
 	}
 
 	function load() {
@@ -299,13 +426,18 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		};
 		if (args.project) ticketArgs.project = args.project;
 		if (args.status) ticketArgs.status = args.status;
-		return Promise.all([
+		const calls = [
 			frappe.call("tracker.api.v1.tasks.list_tasks", args),
 			frappe.call("tracker.api.v1.activity.active"),
 			frappe.call("tracker.api.v1.tickets.list_tickets", ticketArgs),
 			frappe.call("tracker.api.v1.activity.running_now"),
 			frappe.call("tracker.api.v1.hierarchy.my_tree"),
-		]).then(([tasksRes, activeRes, ticketsRes, runningRes, treeRes]) => {
+		];
+		if (state.caps.can_review !== false) {
+			calls.push(frappe.call("tracker.api.v1.tasks.list_tasks", { review_queue: 1, page_size: 100 }));
+		}
+		return Promise.all(calls).then((results) => {
+			const [tasksRes, activeRes, ticketsRes, runningRes, treeRes, reviewRes] = results;
 			const unwrap = (res) => {
 				const m = res.message || {};
 				return m.success === false ? null : m.data;
@@ -316,15 +448,36 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			state.running = unwrap(runningRes) || [];
 			const tree = unwrap(treeRes) || {};
 			state.assignPeople = tree.people || [];
+			state.caps = {
+				can_manage_work: !!tree.can_manage_work,
+				can_review: !!tree.can_review,
+				can_submit_timesheets: !!tree.can_submit_timesheets,
+				can_approve_timesheets: !!tree.can_approve_timesheets,
+				can_close_project: !!tree.can_close_project,
+				is_worker_only: !!tree.is_worker_only,
+			};
+			// System Manager / no tracker role: treat as manager for Desk usability
+			if (
+				!state.caps.can_manage_work &&
+				!state.caps.is_worker_only &&
+				(frappe.user_roles || []).includes("System Manager")
+			) {
+				state.caps.can_manage_work = true;
+				state.caps.can_review = true;
+				state.caps.can_submit_timesheets = true;
+			}
 			if (!state.assignPeople.length && tree.user) {
 				state.assignPeople = [{ user: tree.user, full_name: tree.user, is_self: true }];
 				(tree.subordinates || []).forEach((u) => {
 					state.assignPeople.push({ user: u, full_name: u, is_self: false });
 				});
 			}
+			state.review = reviewRes ? unwrap(reviewRes) || [] : [];
+			applyCapabilities();
 			renderTasks();
 			renderTickets();
 			renderRunning();
+			renderReview();
 			renderActive();
 		}).catch((e) => {
 			frappe.msgprint({ title: __("Error"), message: e.message || e, indicator: "red" });
@@ -571,6 +724,42 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			},
 		});
 		d.show();
+	});
+
+	$root.find(".tracker-btn-submit-ts").on("click", () => {
+		frappe.prompt(
+			[
+				{ fieldname: "from_date", label: __("From"), fieldtype: "Date", reqd: 1, default: frappe.datetime.month_start() },
+				{ fieldname: "to_date", label: __("To"), fieldtype: "Date", reqd: 1, default: frappe.datetime.get_today() },
+			],
+			(values) => {
+				frappe.call({
+					method: "tracker.api.v1.timesheets.submit_team",
+					args: values,
+					freeze: true,
+					callback: (r) => {
+						const m = r.message || {};
+						if (m.success === false) {
+							frappe.msgprint((m.error && m.error.message) || __("Failed"));
+							return;
+						}
+						const data = m.data || {};
+						const n = (data.submitted || []).length;
+						const err = (data.errors || []).length;
+						frappe.msgprint(
+							__("Submitted {0} timesheet(s). {1} error(s).", [n, err]) +
+								(err
+									? "<br>" +
+									  (data.errors || [])
+											.map((e) => frappe.utils.escape_html(e.name + ": " + e.error))
+											.join("<br>")
+									: "")
+						);
+					},
+				});
+			},
+			__("Submit team timesheets")
+		);
 	});
 
 	page.set_primary_action(__("Refresh"), () => load());

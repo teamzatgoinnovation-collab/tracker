@@ -7,8 +7,10 @@ import frappe
 from frappe.desk.form.assign_to import add as assign_add
 
 from tracker.api.response import fail, ok, paginated
+from tracker.permissions.capabilities import assert_can_manage_work
 from tracker.permissions.hierarchy import assert_can_assign, get_company_for_user
 from tracker.services.assign import parse_users
+from tracker.services.audit import log_event
 
 
 @frappe.whitelist()
@@ -82,6 +84,7 @@ def create_ticket(
 	priority: str | None = None,
 	assign_to: str | None = None,
 ):
+	assert_can_manage_work()
 	if not subject:
 		return fail("missing_subject", "subject is required")
 	company = None
@@ -115,6 +118,9 @@ def create_ticket(
 		)
 	if assigned:
 		notify_assigned(doctype="Issue", name=doc.name, users=assigned)
+		log_event("Issue", doc.name, action="assign", extra=f"users={','.join(assigned)}")
+	else:
+		log_event("Issue", doc.name, action="create")
 	return ok(frappe.get_doc("Issue", doc.name).as_dict())
 
 
@@ -122,6 +128,7 @@ def create_ticket(
 def assign(name: str, users: str | None = None, user: str | None = None):
 	from tracker.services.notify import notify_assigned
 
+	assert_can_manage_work()
 	targets = parse_users(users) or parse_users(user)
 	if not name or not targets:
 		return fail("bad_request", "name and user(s) required")
@@ -136,4 +143,5 @@ def assign(name: str, users: str | None = None, user: str | None = None):
 			}
 		)
 	notify_assigned(doctype="Issue", name=name, users=targets)
+	log_event("Issue", name, action="assign", extra=f"users={','.join(targets)}")
 	return ok({"issue": name, "users": targets})

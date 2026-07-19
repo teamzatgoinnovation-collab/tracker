@@ -6,6 +6,7 @@ import frappe
 from frappe import _
 
 from tracker.api.response import fail, ok
+from tracker.permissions.capabilities import assert_can_manage_work, capability_payload
 from tracker.permissions.hierarchy import (
 	can_assign_to,
 	get_employee_for_user,
@@ -20,7 +21,7 @@ from tracker.setup.demo_data import seed_demo_data
 
 @frappe.whitelist()
 def my_tree():
-	"""Assignable people: self + subordinates (for assign pickers)."""
+	"""Assignable people: self + subordinates (for assign pickers) + capability flags."""
 	user = frappe.session.user
 	emp = get_employee_for_user(user)
 	subs = sorted(get_subordinate_users(user))
@@ -32,15 +33,15 @@ def my_tree():
 		seen.add(u)
 		full_name = frappe.db.get_value("User", u, "full_name") or u
 		people.append({"user": u, "full_name": full_name, "is_self": u == user})
-	return ok(
-		{
-			"user": user,
-			"employee": emp,
-			"org_role": get_org_role(emp),
-			"subordinates": subs,
-			"people": people,
-		}
-	)
+	payload = {
+		"user": user,
+		"employee": emp,
+		"org_role": get_org_role(emp),
+		"subordinates": subs,
+		"people": people,
+	}
+	payload.update(capability_payload(user))
+	return ok(payload)
 
 
 @frappe.whitelist()
@@ -119,6 +120,7 @@ def can_assign(assignee: str):
 
 @frappe.whitelist()
 def assign(doctype: str, name: str, users: str | None = None, user: str | None = None):
+	assert_can_manage_work()
 	targets = parse_users(users) or parse_users(user)
 	if not doctype or not name or not targets:
 		return fail("bad_request", "doctype, name, and user(s) required")
@@ -130,6 +132,7 @@ def assign(doctype: str, name: str, users: str | None = None, user: str | None =
 	elif doctype == "Issue":
 		from frappe.desk.form.assign_to import add as assign_add
 		from tracker.permissions.hierarchy import assert_can_assign
+		from tracker.services.audit import log_event
 		from tracker.services.notify import notify_assigned
 
 		for u in targets:
@@ -142,6 +145,7 @@ def assign(doctype: str, name: str, users: str | None = None, user: str | None =
 					"description": "Assigned via Tracker",
 				}
 			)
+		log_event("Issue", name, action="assign", extra=f"users={','.join(targets)}")
 		notify_assigned(doctype="Issue", name=name, users=targets)
 	else:
 		return fail("unsupported", f"Cannot assign {doctype}")

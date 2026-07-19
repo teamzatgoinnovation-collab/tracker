@@ -6,8 +6,10 @@ import frappe
 from frappe import _
 
 from tracker.api.response import fail, ok, paginated
+from tracker.permissions.capabilities import assert_can_manage_work, assert_is_top
 from tracker.permissions.hierarchy import get_company_for_user
 from tracker.services.assign import assign_project_member, parse_users
+from tracker.services.audit import log_event
 
 
 @frappe.whitelist()
@@ -43,6 +45,7 @@ def get_project(name: str):
 
 @frappe.whitelist()
 def create_project(project_name: str, company: str | None = None, notes: str | None = None):
+	assert_can_manage_work()
 	if not project_name:
 		return fail("missing_name", "project_name is required")
 	company = company or get_company_for_user()
@@ -62,6 +65,7 @@ def create_project(project_name: str, company: str | None = None, notes: str | N
 	if frappe.session.user not in {r.user for r in doc.get("users") or []}:
 		doc.append("users", {"user": frappe.session.user})
 		doc.save()
+	log_event("Project", doc.name, action="create")
 	return ok(doc.as_dict())
 
 
@@ -73,3 +77,16 @@ def add_member(project: str, user: str | None = None, users: str | None = None):
 	for u in targets:
 		assign_project_member(project, u)
 	return ok({"project": project, "users": targets})
+
+
+@frappe.whitelist()
+def close_project(name: str):
+	assert_is_top()
+	if not name:
+		return fail("bad_request", "name required")
+	doc = frappe.get_doc("Project", name)
+	prev = doc.status
+	doc.status = "Completed"
+	doc.save()
+	log_event("Project", name, action="close", from_stage=prev, to_stage="Completed")
+	return ok(doc.as_dict())

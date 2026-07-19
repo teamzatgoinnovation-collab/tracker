@@ -7,13 +7,18 @@ import json
 import frappe
 from frappe.desk.form.assign_to import add as assign_add
 
+from tracker.permissions.capabilities import assert_can_manage_work
 from tracker.permissions.hierarchy import assert_can_assign
+from tracker.services.audit import log_event
+from tracker.services.review import STAGE_ASSIGNED, STAGE_DRAFT, get_task_stage
 
 
 def assign_task(task: str, users: list[str], assigner: str | None = None) -> None:
 	from tracker.services.notify import notify_assigned
 
 	assigner = assigner or frappe.session.user
+	assert_can_manage_work(assigner)
+	prev = get_task_stage(frappe.get_doc("Task", task))
 	for user in users:
 		assert_can_assign(assigner, user)
 		assign_add(
@@ -24,17 +29,27 @@ def assign_task(task: str, users: list[str], assigner: str | None = None) -> Non
 				"description": f"Assigned via Tracker by {assigner}",
 			}
 		)
+	log_event(
+		"Task",
+		task,
+		action="assign",
+		from_stage=prev,
+		to_stage=STAGE_ASSIGNED if prev == STAGE_DRAFT else prev,
+		extra=f"users={','.join(users)}",
+	)
 	notify_assigned(doctype="Task", name=task, users=users, assigner=assigner)
 
 
 def assign_project_member(project: str, user: str, assigner: str | None = None) -> None:
 	assigner = assigner or frappe.session.user
+	assert_can_manage_work(assigner)
 	assert_can_assign(assigner, user)
 	doc = frappe.get_doc("Project", project)
 	existing = {row.user for row in doc.get("users") or []}
 	if user not in existing:
 		doc.append("users", {"user": user})
 		doc.save(ignore_permissions=True)
+		log_event("Project", project, action="add_member", extra=f"user={user}")
 
 
 def parse_users(value) -> list[str]:
