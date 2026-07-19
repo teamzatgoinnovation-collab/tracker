@@ -362,7 +362,14 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				}
 				load();
 			},
-			error: () => load(),
+			error: (err) => {
+				frappe.msgprint({
+					title: __("Activity"),
+					message: (err && err.message) || __("Failed"),
+					indicator: "red",
+				});
+				load();
+			},
 		});
 	}
 
@@ -434,7 +441,15 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					method: "tracker.api.v1.projects.create_project",
 					args: { project_name: values.project_name },
 					freeze: true,
-					callback: () => {
+					callback: (r) => {
+						if (r.message && r.message.success === false) {
+							frappe.msgprint({
+								title: __("Create failed"),
+								message: (r.message.error && r.message.error.message) || __("Failed"),
+								indicator: "red",
+							});
+							return;
+						}
 						d.hide();
 						load();
 					},
