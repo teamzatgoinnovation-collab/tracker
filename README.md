@@ -68,15 +68,16 @@ Hub push also needs **zatgo_core** installed and migrated (ZG Device Token + dev
 ## Smoke checklist
 
 1. Desk login → **Tracker** icon / sidebar visible  
-2. Org Setup → Seed demo (or set `reports_to` + roles)  
-3. Workbench → New Task → Assign from org picker (down-tree only)  
-4. Start → Pause → Next → Stop; Timesheet row created on stop/next  
-5. Tickets tab → New Ticket + assign  
-6. Who is Running shows active timers + elapsed  
-7. Tracker Settings → set company / activity type; new Start uses them  
-8. Workbench filters → `?scope=&project=&status=` deep link + Save filter preset  
-9. Hours page → date range shows Timesheet aggregates  
-10. Assign → Notification Log for assignee (FCM if ZG Notification Settings `push_enabled` + `fcm_server_key`)  
+2. Org Setup → **Seed demo work data** (or Top/Sub/Worker only) — password `Tracker@123`  
+3. Workbench → see demo tasks / who is running; Hours → see Timesheet rows  
+4. Workbench → New Task → Assign from org picker (down-tree only)  
+5. Start → Pause → Next → Stop; Timesheet row created on stop/next  
+6. Tickets tab → New Ticket + assign  
+7. Who is Running shows active timers + elapsed  
+8. Tracker Settings → set company / activity type; new Start uses them  
+9. Workbench filters → `?scope=&project=&status=` deep link + Save filter preset  
+10. Hours page → date range shows Timesheet aggregates  
+11. Assign → Notification Log for assignee (FCM if ZG Notification Settings `push_enabled` + `fcm_server_key`)  
 
 ## Clients
 

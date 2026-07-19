@@ -15,6 +15,7 @@ from tracker.permissions.hierarchy import (
 from tracker.permissions.roles import TRACKER_ROLES
 from tracker.services.assign import assign_project_member, assign_task, parse_users
 from tracker.setup.demo_org import seed_demo_org
+from tracker.setup.demo_data import seed_demo_data
 
 
 @frappe.whitelist()
@@ -101,7 +102,14 @@ def update_employee_org(
 
 @frappe.whitelist()
 def seed_demo(company: str | None = None):
+	"""Org tree only (Top / Sub / Worker)."""
 	return ok(seed_demo_org(company=company))
+
+
+@frappe.whitelist()
+def seed_demo_work(company: str | None = None):
+	"""Full demo: org + project/tasks/tickets + timesheets + live sessions."""
+	return ok(seed_demo_data(company=company))
 
 
 @frappe.whitelist()

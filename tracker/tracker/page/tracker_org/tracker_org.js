@@ -11,7 +11,11 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 			<div class="mb-3">
 				<button class="btn btn-primary btn-sm tracker-org-refresh">${__("Refresh")}</button>
 				<button class="btn btn-secondary btn-sm tracker-org-seed">${__("Seed demo Top / Sub / Worker")}</button>
+				<button class="btn btn-warning btn-sm tracker-org-seed-work">${__("Seed demo work data")}</button>
 			</div>
+			<p class="text-muted small tracker-org-seed-hint">
+				${__("Work data fills Project, Tasks, Tickets, Timesheets (Hours page), and Running/Paused sessions. Demo password")}: <code>Tracker@123</code>
+			</p>
 			<div class="tracker-org-tree"></div>
 		</div>
 	`);
@@ -127,6 +131,52 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 					},
 				});
 			});
+		});
+
+	$(page.main)
+		.find(".tracker-org-seed-work")
+		.on("click", () => {
+			frappe.confirm(
+				__(
+					"Seed full demo: org users, Tracker Demo Project, tasks, tickets, timesheets, and live timers? Password Tracker@123."
+				),
+				() => {
+					frappe.call({
+						method: "tracker.api.v1.hierarchy.seed_demo_work",
+						freeze: true,
+						freeze_message: __("Seeding demo work data…"),
+						callback: (r) => {
+							const data = (r.message && r.message.data) || {};
+							frappe.msgprint({
+								title: __("Demo work seeded"),
+								indicator: "green",
+								message:
+									__("Project") +
+									": " +
+									(data.project || "—") +
+									"<br>" +
+									__("Timesheets") +
+									": " +
+									((data.timesheets && data.timesheets.length) || 0) +
+									"<br>" +
+									__("Sessions") +
+									": " +
+									((data.sessions && data.sessions.length) || 0) +
+									"<br>" +
+									__("Open Workbench and Hours to see results. Log in as tracker.worker@example.com / Tracker@123"),
+							});
+							load();
+						},
+						error: (err) => {
+							frappe.msgprint({
+								title: __("Seed failed"),
+								indicator: "red",
+								message: (err && err.message) || __("Failed"),
+							});
+						},
+					});
+				}
+			);
 		});
 
 	load();
