@@ -239,24 +239,22 @@ def _ensure_desk_entry() -> None:
 			if changed:
 				_save_ignore_links(doc)
 
-	# Workspace title/label for Desk
+	# Workspace title/label for Desk (avoid full save — Workspace has mandatory fields)
 	if frappe.db.exists("Workspace", "Tracker"):
-		ws = frappe.get_doc("Workspace", "Tracker")
-		ws_changed = False
-		if ws.title != "Task Management":
-			ws.title = "Task Management"
-			ws_changed = True
-		if getattr(ws, "label", None) != "Task Management":
-			ws.label = "Task Management"
-			ws_changed = True
-		if ws_changed:
-			_save_ignore_links(ws)
+		frappe.db.set_value("Workspace", "Tracker", "title", "Task Management", update_modified=False)
+		if frappe.get_meta("Workspace").has_field("label"):
+			frappe.db.set_value("Workspace", "Tracker", "label", "Task Management", update_modified=False)
 
 	# Keep sidebar title branded after any earlier insert
 	if frappe.db.exists("Workspace Sidebar", "Tracker"):
 		sb = frappe.get_doc("Workspace Sidebar", "Tracker")
-		if sb.title != "Task Management" or _sync_sidebar_items(sb):
+		changed = False
+		if sb.title != "Task Management":
 			sb.title = "Task Management"
+			changed = True
+		if _sync_sidebar_items(sb):
+			changed = True
+		if changed:
 			_save_ignore_links(sb)
 
 	frappe.db.commit()
