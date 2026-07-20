@@ -684,3 +684,7 @@
 	color: var(--red-600, #dc2626);
 	font-size: 13px;
 }
+
+.tracker-activity-row .tracker-row-title {
+	margin-left: 6px;
+}

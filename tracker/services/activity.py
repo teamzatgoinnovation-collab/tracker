@@ -9,6 +9,7 @@ from frappe import _
 from frappe.utils import get_datetime, getdate, now_datetime, time_diff_in_seconds
 
 from tracker.permissions.hierarchy import get_company_for_user, get_employee_for_user
+from tracker.services.audit import log_event
 from tracker.tracker.doctype.tracker_settings.tracker_settings import get_default_activity_type
 
 DOCTYPE = "Tracker Activity Session"
@@ -135,6 +136,17 @@ def start_session(
 	)
 	doc.insert(ignore_permissions=True)
 	frappe.db.commit()
+	extra = []
+	if task:
+		extra.append(f"task={task}")
+	if project:
+		extra.append(f"project={project}")
+	log_event(
+		DOCTYPE,
+		doc.name,
+		action="start",
+		extra=" ".join(extra) if extra else None,
+	)
 	return _session_payload(doc)
 
 
@@ -149,6 +161,12 @@ def pause_session(name: str | None = None, user: str | None = None) -> dict:
 	doc.status = "Paused"
 	_save_session(doc)
 	frappe.db.commit()
+	log_event(
+		DOCTYPE,
+		doc.name,
+		action="pause",
+		extra=f"task={doc.task}" if doc.task else None,
+	)
 	return _session_payload(doc)
 
 
@@ -170,6 +188,12 @@ def resume_session(name: str, user: str | None = None) -> dict:
 	doc.status = "Running"
 	_save_session(doc)
 	frappe.db.commit()
+	log_event(
+		DOCTYPE,
+		doc.name,
+		action="resume",
+		extra=f"task={doc.task}" if doc.task else None,
+	)
 	return _session_payload(doc)
 
 
@@ -185,6 +209,17 @@ def stop_session(name: str | None = None, *, flush: bool = True, user: str | Non
 	if flush:
 		_flush_to_timesheet(doc)
 	frappe.db.commit()
+	extra = []
+	if doc.task:
+		extra.append(f"task={doc.task}")
+	if getattr(doc, "timesheet", None):
+		extra.append(f"timesheet={doc.timesheet}")
+	log_event(
+		DOCTYPE,
+		doc.name,
+		action="stop",
+		extra=" ".join(extra) if extra else None,
+	)
 	return _session_payload(doc)
 
 

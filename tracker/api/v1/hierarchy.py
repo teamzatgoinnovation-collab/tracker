@@ -96,6 +96,15 @@ def create_top_member(
 		branch=branch,
 		reports_to=None,
 	)
+	from tracker.services.audit import log_event
+
+	if result.get("employee"):
+		log_event(
+			"Employee",
+			result["employee"],
+			action="create_top",
+			extra=f"user={result.get('user') or email}",
+		)
 	return ok(result)
 
 
@@ -146,6 +155,15 @@ def assign_org_member(
 		branch=branch,
 		reports_to=reports_to,
 	)
+	from tracker.services.audit import log_event
+
+	if result.get("employee"):
+		log_event(
+			"Employee",
+			result["employee"],
+			action="assign_org",
+			extra=f"user={result.get('user') or email} role={role}",
+		)
 	return ok(result)
 
 
@@ -194,6 +212,15 @@ def update_employee_org(
 		if tracker_role in TRACKER_ROLES:
 			user_doc.append_roles(tracker_role)
 		user_doc.save(ignore_permissions=True)
+
+	from tracker.services.audit import log_event
+
+	log_event(
+		"Employee",
+		employee,
+		action="update_org",
+		extra=f"role={tracker_org_role or ''} reports_to={reports_to or ''}",
+	)
 
 	return ok(frappe.get_doc("Employee", employee).as_dict())
 

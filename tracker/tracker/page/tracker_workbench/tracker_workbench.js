@@ -33,6 +33,9 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				tickets: [],
 				running: [],
 				review: [],
+				activityFeed: [],
+				activityScope: "team",
+				activityAction: "",
 				overview: {
 					counts: {},
 					status: "Pending Review",
@@ -208,6 +211,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				if (this.tab === "tickets") return this.loadTickets();
 				if (this.tab === "running") return this.loadRunning();
 				if (this.tab === "review") return this.loadReview();
+				if (this.tab === "activity") return this.loadActivityFeed();
 			},
 			async loadOverview(status) {
 				const st = status || this.overview.status || "Pending Review";
@@ -269,6 +273,49 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				});
 				const data = this.unwrap(msg);
 				this.review = (data && data.items) || data || [];
+			},
+			async loadActivityFeed() {
+				try {
+					const args = {
+						limit: 100,
+						scope: this.caps.is_worker_only ? "mine" : this.activityScope || "team",
+					};
+					if (this.activityAction) args.action = this.activityAction;
+					const msg = await this.call("tracker.api.v1.audit.feed", args);
+					const data = this.unwrap(msg) || {};
+					this.activityFeed = data.items || [];
+				} catch (e) {
+					frappe.msgprint({
+						title: __("Activity"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
+				}
+			},
+			openActivityDoc(row) {
+				if (!row || !row.doctype || !row.docname) return;
+				frappe.set_route("Form", row.doctype, row.docname);
+			},
+			formatWhen(ts) {
+				if (!ts) return "";
+				try {
+					return frappe.datetime.prettyDate(ts);
+				} catch (e) {
+					return String(ts);
+				}
+			},
+			actionBadgeClass(action) {
+				const a = (action || "").toLowerCase();
+				if (["approve", "create", "create_top", "assign", "assign_org", "start", "resume"].includes(a)) {
+					return "tracker-status tracker-status-completed";
+				}
+				if (["rework", "reject", "pause", "close"].includes(a)) {
+					return "tracker-status tracker-status-pending-review";
+				}
+				if (["stop", "submit_for_review", "submit_team"].includes(a)) {
+					return "tracker-status tracker-status-working";
+				}
+				return "tracker-status tracker-status-other";
 			},
 			setTab(tab) {
 				this.tab = tab;
@@ -645,6 +692,9 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				<li class="nav-item" v-if="caps.can_review">
 					<a class="nav-link" :class="{active: tab==='review'}" href="#" @click.prevent="setTab('review')">{{ __("Review") }}</a>
 				</li>
+				<li class="nav-item">
+					<a class="nav-link" :class="{active: tab==='activity'}" href="#" @click.prevent="setTab('activity')">{{ __("Activity") }}</a>
+				</li>
 			</ul>
 
 			<div v-if="tab==='overview'" class="tracker-panel">
@@ -793,6 +843,65 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 							<button class="btn btn-xs btn-success" @click.stop="approve(row.name)">{{ __("Approve") }}</button>
 							<button class="btn btn-xs btn-warning" @click.stop="rework(row.name)">{{ __("Rework") }}</button>
 						</div>
+					</div>
+				</div>
+			</div>
+
+			<div v-if="tab==='activity'" class="tracker-panel">
+				<div class="tracker-chip-row">
+					<select
+						class="form-control"
+						style="width:auto;min-width:8rem"
+						v-model="activityScope"
+						v-if="!caps.is_worker_only"
+						@change="loadActivityFeed"
+					>
+						<option value="team">{{ __("Team") }}</option>
+						<option value="mine">{{ __("Mine") }}</option>
+					</select>
+					<select class="form-control" style="width:auto;min-width:10rem" v-model="activityAction" @change="loadActivityFeed">
+						<option value="">{{ __("All actions") }}</option>
+						<option value="start">{{ __("Start") }}</option>
+						<option value="pause">{{ __("Pause") }}</option>
+						<option value="resume">{{ __("Resume") }}</option>
+						<option value="stop">{{ __("Stop") }}</option>
+						<option value="create">{{ __("Create") }}</option>
+						<option value="assign">{{ __("Assign") }}</option>
+						<option value="submit_for_review">{{ __("Submit for review") }}</option>
+						<option value="approve">{{ __("Approve") }}</option>
+						<option value="rework">{{ __("Rework") }}</option>
+						<option value="create_top">{{ __("Create Top") }}</option>
+						<option value="assign_org">{{ __("Assign org") }}</option>
+						<option value="update_org">{{ __("Update org") }}</option>
+						<option value="close">{{ __("Close project") }}</option>
+						<option value="submit_team">{{ __("Submit timesheets") }}</option>
+					</select>
+				</div>
+				<div v-if="!activityFeed.length" class="tracker-empty">
+					<div class="tracker-empty-title">{{ __("No activity yet") }}</div>
+					<div class="tracker-empty-hint">{{ __("Starts, pauses, assigns, approvals, and org changes appear here.") }}</div>
+				</div>
+				<div
+					v-for="row in activityFeed"
+					:key="row.name"
+					class="tracker-task-row tracker-activity-row"
+					@click="openActivityDoc(row)"
+				>
+					<div class="tracker-row-main">
+						<div>
+							<span :class="actionBadgeClass(row.action)">{{ row.action_label || row.action }}</span>
+							<span class="tracker-row-title">{{ row.subject || row.docname }}</span>
+							<div class="tracker-row-meta">
+								<span>{{ row.actor }}</span>
+								<span class="dot">·</span>
+								<span>{{ row.doctype }}</span>
+								<span class="dot" v-if="row.to_stage">·</span>
+								<span v-if="row.to_stage">{{ row.from_stage || "" }} → {{ row.to_stage }}</span>
+								<span class="dot" v-if="row.note">·</span>
+								<span v-if="row.note">{{ row.note }}</span>
+							</div>
+						</div>
+						<div class="text-muted small">{{ formatWhen(row.creation) }}</div>
 					</div>
 				</div>
 			</div>
