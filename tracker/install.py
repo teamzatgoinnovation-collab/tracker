@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+from frappe.utils import get_bench_path
 
 from tracker.permissions.roles import ensure_role_permissions, ensure_roles
 
@@ -91,6 +95,7 @@ def after_install() -> None:
 	ensure_role_permissions()
 	_ensure_activity_type("Execution")
 	_ensure_desk_entry()
+	sync_public_assets()
 	frappe.clear_cache()
 
 
@@ -101,6 +106,68 @@ def after_migrate() -> None:
 	_ensure_activity_type("Execution")
 	_ensure_desk_entry()
 	_unsubmit_live_activity_sessions()
+	sync_public_assets()
+
+
+def sync_public_assets() -> None:
+	"""Copy public/ into sites/tracker_assets for frappe_docker nginx.
+
+	Frontend containers do not mount apps/, so assets/tracker → apps/... 404s.
+	Keep a real tree on the shared sites volume and link bench assets/tracker to it.
+	"""
+	try:
+		bench = get_bench_path()
+		src = frappe.get_app_path("tracker", "public")
+		if not os.path.isdir(src):
+			return
+
+		vol = os.path.join(bench, "sites", "tracker_assets")
+		os.makedirs(vol, exist_ok=True)
+		for name in os.listdir(vol):
+			path = os.path.join(vol, name)
+			if os.path.isdir(path) and not os.path.islink(path):
+				shutil.rmtree(path)
+			else:
+				os.unlink(path)
+		for name in os.listdir(src):
+			s = os.path.join(src, name)
+			d = os.path.join(vol, name)
+			if os.path.isdir(s):
+				shutil.copytree(s, d)
+			else:
+				shutil.copy2(s, d)
+
+		# Resolve assets root (sites/assets is often a symlink to bench/assets)
+		candidates = [
+			os.path.join(bench, "assets"),
+			os.path.join(bench, "sites", "assets"),
+		]
+		for assets_root in candidates:
+			if not os.path.exists(assets_root):
+				if assets_root.endswith("/assets") and assets_root.startswith(os.path.join(bench, "assets")):
+					os.makedirs(assets_root, exist_ok=True)
+				else:
+					continue
+			root = os.path.realpath(assets_root)
+			link = os.path.join(root, "tracker")
+			try:
+				if os.path.lexists(link):
+					if os.path.islink(link) or os.path.isfile(link):
+						os.unlink(link)
+					else:
+						shutil.rmtree(link)
+				os.symlink(vol, link)
+			except OSError:
+				try:
+					if os.path.isdir(link):
+						shutil.rmtree(link)
+					elif os.path.lexists(link):
+						os.unlink(link)
+					shutil.copytree(vol, link)
+				except OSError:
+					pass
+	except Exception:
+		frappe.log_error(title="tracker sync_public_assets")
 
 
 def _unsubmit_live_activity_sessions() -> None:
