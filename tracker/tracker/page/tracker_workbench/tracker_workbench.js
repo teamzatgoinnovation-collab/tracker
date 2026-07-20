@@ -33,8 +33,15 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				tickets: [],
 				running: [],
 				review: [],
-				overview: { counts: {}, status: "Pending Review", items: [], running: 0, timesheet_drafts: 0 },
+				overview: {
+					counts: {},
+					status: "Pending Review",
+					items: [],
+					running: 0,
+					timesheet_drafts: 0,
+				},
 				selected: null,
+				selectedTicket: null,
 				active: null,
 				scope: "mine",
 				projectFilter: "",
@@ -64,22 +71,56 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				const h = Math.floor(sec / 3600);
 				const m = Math.floor((sec % 3600) / 60);
 				const s = Math.floor(sec % 60);
-				return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+				return __("Elapsed") + ": " + `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 			},
 			canStart() {
-				return !!this.selected && !(this.active && this.active.status === "Running" && this.active.task === this.selected);
+				return (
+					!!this.selected &&
+					!(this.active && this.active.status === "Running" && this.active.task === this.selected)
+				);
 			},
 			canPause() {
 				return !!(this.active && this.active.status === "Running");
 			},
 			canStop() {
-				return !!(this.active && (this.active.status === "Running" || this.active.status === "Paused"));
+				return !!(
+					this.active &&
+					(this.active.status === "Running" || this.active.status === "Paused")
+				);
 			},
 			statusChips() {
-				const order = ["Open", "Working", "Pending Review", "Completed", "Cancelled", "Overdue"];
+				const order = ["Open", "Working", "Pending Review", "Completed"];
 				const counts = this.overview.counts || {};
-				const keys = [...order.filter((k) => counts[k] != null), ...Object.keys(counts).filter((k) => !order.includes(k))];
-				return keys.map((k) => ({ status: k, count: counts[k] || 0 }));
+				const keys = [
+					...order.filter((k) => counts[k] != null || true),
+					...Object.keys(counts).filter((k) => !order.includes(k)),
+				];
+				// unique
+				const seen = new Set();
+				return keys
+					.filter((k) => {
+						if (seen.has(k)) return false;
+						seen.add(k);
+						return true;
+					})
+					.map((k) => ({ status: k, count: counts[k] || 0 }));
+			},
+			taskTree() {
+				const list = this.tasks || [];
+				const byParent = {};
+				list.forEach((t) => {
+					const p = t.parent_task || "";
+					(byParent[p] = byParent[p] || []).push(t);
+				});
+				const out = [];
+				const walk = (t, depth) => {
+					out.push({ row: t, depth });
+					(byParent[t.name] || []).forEach((c) => walk(c, depth + 1));
+				};
+				const roots = list.filter((t) => !t.parent_task);
+				if (roots.length) roots.forEach((r) => walk(r, 0));
+				else list.forEach((t) => out.push({ row: t, depth: 0 }));
+				return out;
 			},
 		},
 		mounted() {
@@ -94,7 +135,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		methods: {
 			statusClass(status) {
 				const s = (status || "").toLowerCase().replace(/\s+/g, "-");
-				return `tracker-status tracker-status-${s}`;
+				return `tracker-status tracker-status-${s || "other"}`;
 			},
 			call(method, args) {
 				return new Promise((resolve, reject) => {
@@ -104,11 +145,11 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 						callback: (r) => {
 							const msg = r.message;
 							if (msg && msg.success === false) {
-								const err = (msg.error && msg.error.message) || "Request failed";
+								const err = (msg.error && msg.error.message) || msg.message || "Request failed";
 								reject(new Error(err));
 								return;
 							}
-							resolve(msg);
+							resolve(msg && msg.data !== undefined ? msg : msg);
 						},
 						error: (err) => reject(err),
 					});
@@ -125,7 +166,11 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					if (this.showOverview) this.tab = "overview";
 					await Promise.all([this.refreshActive(), this.refreshTab()]);
 				} catch (e) {
-					frappe.msgprint({ title: __("Task Management"), message: String(e.message || e), indicator: "red" });
+					frappe.msgprint({
+						title: __("Task Management"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
 				}
 			},
 			async loadCaps() {
@@ -140,7 +185,10 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					else this.roleLabel = "";
 				} catch (e) {
 					this.caps = emptyCaps();
-					frappe.show_alert({ message: __("Could not load role capabilities"), indicator: "orange" });
+					frappe.show_alert({
+						message: __("Could not load role capabilities"),
+						indicator: "orange",
+					});
 				}
 			},
 			async refreshActive() {
@@ -149,6 +197,9 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				this.active = data || null;
 				if (this.active && this.active.status === "Running") {
 					this.active._tick_at = Date.now();
+					this.active._tick_base = Number(
+						this.active.elapsed_seconds || this.active.duration_seconds || 0
+					);
 				}
 			},
 			async refreshTab() {
@@ -160,18 +211,27 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			},
 			async loadOverview(status) {
 				const st = status || this.overview.status || "Pending Review";
-				const msg = await this.call("tracker.api.v1.reports.overview", { status: st });
-				const data = this.unwrap(msg) || {};
-				this.overview = {
-					counts: data.counts || {},
-					status: data.status || st,
-					items: data.items || [],
-					running: data.running || 0,
-					timesheet_drafts: data.timesheet_drafts || 0,
-				};
+				try {
+					const msg = await this.call("tracker.api.v1.reports.overview", { status: st });
+					const data = this.unwrap(msg) || {};
+					this.overview = {
+						counts: data.counts || {},
+						status: data.status || st,
+						items: data.items || [],
+						running: data.running || 0,
+						timesheet_drafts: data.timesheet_drafts || 0,
+					};
+					this.statusFilter = data.status || st;
+				} catch (e) {
+					frappe.msgprint({
+						title: __("Overview"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
+				}
 			},
 			async loadTasks() {
-				const args = { page: 1, page_size: 50 };
+				const args = { page: 1, page_size: 100, tree: 1 };
 				if (this.scope === "mine") args.mine = 1;
 				else if (this.scope === "team") args.team = 1;
 				else {
@@ -185,7 +245,15 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				this.tasks = (data && data.items) || data || [];
 			},
 			async loadTickets() {
-				const msg = await this.call("tracker.api.v1.tickets.list_tickets", { page: 1, page_size: 50 });
+				const args = { page: 1, page_size: 100 };
+				if (this.scope === "mine") args.mine = 1;
+				else if (this.scope === "team") args.team = 1;
+				else {
+					args.mine = 1;
+					args.team = 1;
+				}
+				if (this.projectFilter) args.project = this.projectFilter;
+				const msg = await this.call("tracker.api.v1.tickets.list_tickets", args);
 				const data = this.unwrap(msg);
 				this.tickets = (data && data.items) || data || [];
 			},
@@ -197,7 +265,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				const msg = await this.call("tracker.api.v1.tasks.list_tasks", {
 					review_queue: 1,
 					page: 1,
-					page_size: 50,
+					page_size: 100,
 				});
 				const data = this.unwrap(msg);
 				this.review = (data && data.items) || data || [];
@@ -209,6 +277,13 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			selectTask(name) {
 				this.selected = name;
 			},
+			selectTicket(name) {
+				this.selectedTicket = name;
+			},
+			onChipClick(status) {
+				this.statusFilter = status;
+				this.loadOverview(status);
+			},
 			async actStart() {
 				if (!this.selected) return;
 				this.busy = true;
@@ -217,7 +292,11 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					await this.refreshActive();
 					await this.refreshTab();
 				} catch (e) {
-					frappe.msgprint({ title: __("Start"), message: String(e.message || e), indicator: "red" });
+					frappe.msgprint({
+						title: __("Start"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
 				} finally {
 					this.busy = false;
 				}
@@ -228,7 +307,11 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					await this.call("tracker.api.v1.activity.pause");
 					await this.refreshActive();
 				} catch (e) {
-					frappe.msgprint({ title: __("Pause"), message: String(e.message || e), indicator: "red" });
+					frappe.msgprint({
+						title: __("Pause"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
 				} finally {
 					this.busy = false;
 				}
@@ -242,14 +325,18 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					await this.refreshTab();
 					if (data.timesheet) {
 						frappe.show_alert({
-							message: __("Timesheet {0}", [data.timesheet]),
+							message: __("Stopped — timesheet {0}", [data.timesheet]),
 							indicator: "green",
 						});
 					} else {
 						frappe.show_alert({ message: __("Session stopped"), indicator: "blue" });
 					}
 				} catch (e) {
-					frappe.msgprint({ title: __("Stop"), message: String(e.message || e), indicator: "red" });
+					frappe.msgprint({
+						title: __("Stop"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
 				} finally {
 					this.busy = false;
 				}
@@ -273,92 +360,234 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				}
 			},
 			async rework(name) {
-				const note = await new Promise((resolve) => {
-					frappe.prompt(
-						[{ fieldname: "note", fieldtype: "Small Text", label: __("Rework note"), reqd: 1 }],
-						(v) => resolve(v.note),
-						__("Request rework")
-					);
-				});
-				if (!note) return;
-				try {
-					await this.call("tracker.api.v1.tasks.request_rework", { name, note });
-					frappe.show_alert({ message: __("Sent for rework"), indicator: "orange" });
-					await this.refreshTab();
-				} catch (e) {
-					frappe.msgprint(String(e.message || e));
-				}
+				frappe.prompt(
+					[
+						{
+							fieldname: "note",
+							fieldtype: "Small Text",
+							label: __("Rework note"),
+							reqd: 1,
+						},
+					],
+					async (v) => {
+						try {
+							await this.call("tracker.api.v1.tasks.request_rework", {
+								name,
+								note: v.note,
+							});
+							frappe.show_alert({
+								message: __("Sent for rework"),
+								indicator: "orange",
+							});
+							await this.refreshTab();
+						} catch (e) {
+							frappe.msgprint(String(e.message || e));
+						}
+					},
+					__("Request rework")
+				);
 			},
 			async newProject() {
-				const values = await new Promise((resolve) => {
-					frappe.prompt(
-						[
-							{ fieldname: "project_name", fieldtype: "Data", label: __("Project Name"), reqd: 1 },
-						],
-						(v) => resolve(v),
-						__("New Project")
-					);
-				});
-				if (!values) return;
-				try {
-					await this.call("tracker.api.v1.projects.create_project", values);
-					frappe.show_alert({ message: __("Project created"), indicator: "green" });
-					await this.refreshTab();
-				} catch (e) {
-					frappe.msgprint(String(e.message || e));
-				}
+				frappe.prompt(
+					[
+						{
+							fieldname: "project_name",
+							fieldtype: "Data",
+							label: __("Project Name"),
+							reqd: 1,
+						},
+					],
+					async (values) => {
+						try {
+							await this.call("tracker.api.v1.projects.create_project", values);
+							frappe.show_alert({
+								message: __("Project created"),
+								indicator: "green",
+							});
+							await this.refreshTab();
+						} catch (e) {
+							frappe.msgprint(String(e.message || e));
+						}
+					},
+					__("New Project")
+				);
 			},
 			async newTask() {
-				const values = await new Promise((resolve) => {
-					frappe.prompt(
-						[
-							{ fieldname: "subject", fieldtype: "Data", label: __("Subject"), reqd: 1 },
-							{ fieldname: "project", fieldtype: "Link", options: "Project", label: __("Project") },
-						],
-						(v) => resolve(v),
-						__("New Task")
-					);
-				});
-				if (!values) return;
-				try {
-					await this.call("tracker.api.v1.tasks.create_task", values);
-					frappe.show_alert({ message: __("Task created"), indicator: "green" });
-					await this.refreshTab();
-				} catch (e) {
-					frappe.msgprint(String(e.message || e));
+				const peopleOpts = (this.people || []).map((p) => p.user).join("\n");
+				frappe.prompt(
+					[
+						{ fieldname: "subject", fieldtype: "Data", label: __("Subject"), reqd: 1 },
+						{
+							fieldname: "project",
+							fieldtype: "Link",
+							options: "Project",
+							label: __("Project"),
+						},
+						{
+							fieldname: "assign_to",
+							fieldtype: "Select",
+							options: "\n" + peopleOpts,
+							label: __("Assign To"),
+						},
+					],
+					async (values) => {
+						try {
+							await this.call("tracker.api.v1.tasks.create_task", values);
+							frappe.show_alert({ message: __("Task created"), indicator: "green" });
+							await this.refreshTab();
+						} catch (e) {
+							frappe.msgprint(String(e.message || e));
+						}
+					},
+					__("New Task")
+				);
+			},
+			async newTicket() {
+				const peopleOpts = (this.people || []).map((p) => p.user).join("\n");
+				frappe.prompt(
+					[
+						{ fieldname: "subject", fieldtype: "Data", label: __("Subject"), reqd: 1 },
+						{
+							fieldname: "project",
+							fieldtype: "Link",
+							options: "Project",
+							label: __("Project"),
+						},
+						{
+							fieldname: "description",
+							fieldtype: "Small Text",
+							label: __("Description"),
+						},
+						{
+							fieldname: "assign_to",
+							fieldtype: "Select",
+							options: "\n" + peopleOpts,
+							label: __("Assign To"),
+						},
+					],
+					async (values) => {
+						try {
+							await this.call("tracker.api.v1.tickets.create_ticket", values);
+							frappe.show_alert({
+								message: __("Ticket created"),
+								indicator: "green",
+							});
+							this.tab = "tickets";
+							await this.refreshTab();
+						} catch (e) {
+							frappe.msgprint(String(e.message || e));
+						}
+					},
+					__("New Ticket")
+				);
+			},
+			async openAssign() {
+				const isTicket = this.tab === "tickets";
+				const name = isTicket ? this.selectedTicket : this.selected;
+				const doctype = isTicket ? "Issue" : "Task";
+				if (!name) {
+					frappe.msgprint(__("Select a task or ticket first."));
+					return;
 				}
+				if (!(this.people || []).length) {
+					frappe.msgprint(__("No assignable people in your org tree."));
+					return;
+				}
+				const peopleOpts = (this.people || []).map((p) => p.user).join("\n");
+				frappe.prompt(
+					[
+						{
+							fieldname: "user",
+							fieldtype: "Select",
+							options: "\n" + peopleOpts,
+							label: __("Assignee"),
+							reqd: 1,
+						},
+					],
+					async (values) => {
+						try {
+							await this.call("tracker.api.v1.hierarchy.assign", {
+								doctype,
+								name,
+								user: values.user,
+							});
+							frappe.show_alert({ message: __("Assigned"), indicator: "green" });
+							await this.refreshTab();
+						} catch (e) {
+							frappe.msgprint(String(e.message || e));
+						}
+					},
+					__("Assign") + " " + doctype
+				);
 			},
 			async submitTimesheets() {
-				try {
-					const msg = await this.call("tracker.api.v1.timesheets.submit_team");
-					const data = this.unwrap(msg) || {};
-					frappe.msgprint(
-						__("Submitted: {0}. Errors: {1}", [
-							(data.submitted || []).length,
-							(data.errors || []).length,
-						])
-					);
-				} catch (e) {
-					frappe.msgprint(String(e.message || e));
-				}
+				frappe.prompt(
+					[
+						{
+							fieldname: "from_date",
+							label: __("From"),
+							fieldtype: "Date",
+							reqd: 1,
+							default: frappe.datetime.month_start(),
+						},
+						{
+							fieldname: "to_date",
+							label: __("To"),
+							fieldtype: "Date",
+							reqd: 1,
+							default: frappe.datetime.get_today(),
+						},
+					],
+					async (values) => {
+						try {
+							const msg = await this.call(
+								"tracker.api.v1.timesheets.submit_team",
+								values
+							);
+							const data = this.unwrap(msg) || {};
+							frappe.msgprint(
+								__("Submitted: {0}. Errors: {1}", [
+									(data.submitted || []).length,
+									(data.errors || []).length,
+								])
+							);
+						} catch (e) {
+							frappe.msgprint(String(e.message || e));
+						}
+					},
+					__("Submit team timesheets")
+				);
 			},
 			taskActions(row) {
 				const status = row.status || "";
 				const btns = [];
 				if (status === "Working") {
-					btns.push({ key: "ready", label: __("Pending Review"), fn: () => this.submitReview(row.name) });
+					btns.push({
+						key: "ready",
+						label: __("Ready for Review"),
+						fn: () => this.submitReview(row.name),
+					});
 				}
 				if (status === "Pending Review" && this.caps.can_review) {
-					btns.push({ key: "approve", label: __("Approve"), fn: () => this.approve(row.name) });
-					btns.push({ key: "rework", label: __("Rework"), fn: () => this.rework(row.name) });
+					btns.push({
+						key: "approve",
+						label: __("Approve"),
+						fn: () => this.approve(row.name),
+					});
+					btns.push({
+						key: "rework",
+						label: __("Rework"),
+						fn: () => this.rework(row.name),
+					});
 				}
 				return btns;
 			},
 		},
 		template: `
 		<div class="tracker-workbench">
-			<div class="tracker-role-strip" v-if="roleLabel">
-				<span class="text-muted">{{ __("Role") }}:</span> <strong>{{ roleLabel }}</strong>
+			<div class="tracker-brand">
+				<span class="tracker-brand-title">{{ __("Task Management") }}</span>
+				<span v-if="roleLabel" class="tracker-role-chrome">{{ roleLabel }}</span>
 			</div>
 
 			<div class="tracker-active card p-3 mb-3">
@@ -377,15 +606,17 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			</div>
 
 			<div class="tracker-toolbar mb-3 flex flex-wrap" style="gap:8px;align-items:center">
-				<select class="form-control" style="width:auto" v-model="scope" @change="loadTasks" v-if="tab==='tasks'">
+				<select class="form-control" style="width:auto" v-model="scope" @change="loadTasks" v-if="tab==='tasks' || tab==='tickets'">
 					<option value="mine">{{ __("My Work") }}</option>
 					<option value="team" v-if="caps.is_lead_or_above">{{ __("Team") }}</option>
 					<option value="both" v-if="caps.is_lead_or_above">{{ __("Mine + Team") }}</option>
 				</select>
-				<input class="form-control" style="width:10rem" v-model="projectFilter" :placeholder="__('Project')" v-if="tab==='tasks'" @change="loadTasks" />
+				<input class="form-control" style="width:10rem" v-model="projectFilter" :placeholder="__('Project')" v-if="tab==='tasks' || tab==='tickets'" @change="refreshTab" />
 				<input class="form-control" style="width:8rem" v-model="statusFilter" :placeholder="__('Status')" v-if="tab==='tasks'" @change="loadTasks" />
 				<button class="btn btn-default btn-sm" v-if="caps.can_manage_work" @click="newProject">{{ __("New Project") }}</button>
 				<button class="btn btn-default btn-sm" v-if="caps.can_manage_work" @click="newTask">{{ __("New Task") }}</button>
+				<button class="btn btn-default btn-sm" v-if="caps.can_manage_work" @click="newTicket">{{ __("New Ticket") }}</button>
+				<button class="btn btn-default btn-sm" v-if="caps.can_manage_work" @click="openAssign">{{ __("Assign") }}</button>
 				<button class="btn btn-default btn-sm" v-if="caps.can_submit_timesheets" @click="submitTimesheets">{{ __("Submit team timesheets") }}</button>
 			</div>
 
@@ -412,9 +643,10 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					<button
 						v-for="chip in statusChips"
 						:key="chip.status"
+						type="button"
 						class="btn btn-sm tracker-chip"
 						:class="[statusClass(chip.status), {active: overview.status===chip.status}]"
-						@click="loadOverview(chip.status)"
+						@click="onChipClick(chip.status)"
 					>
 						{{ chip.status }} <span class="badge">{{ chip.count }}</span>
 					</button>
@@ -453,23 +685,24 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			</div>
 
 			<div v-if="tab==='tasks'" class="tracker-panel">
-				<div v-if="!tasks.length" class="text-muted p-3">{{ __("No tasks") }}</div>
+				<div v-if="!taskTree.length" class="text-muted p-3">{{ __("No tasks") }}</div>
 				<div
-					v-for="row in tasks"
-					:key="row.name"
+					v-for="item in taskTree"
+					:key="item.row.name"
 					class="tracker-task-row"
-					:class="{selected: selected===row.name}"
-					@click="selectTask(row.name)"
+					:class="{selected: selected===item.row.name}"
+					:style="{paddingLeft: (item.depth * 16 + 12) + 'px'}"
+					@click="selectTask(item.row.name)"
 				>
 					<div class="flex justify-between align-center flex-wrap" style="gap:8px">
 						<div>
-							<strong>{{ row.subject || row.name }}</strong>
-							<span :class="statusClass(row.status)">{{ row.status }}</span>
-							<div class="text-muted small">{{ row.project || "" }} · {{ row.name }}</div>
+							<strong>{{ item.row.subject || item.row.name }}</strong>
+							<span :class="statusClass(item.row.status)">{{ item.row.status }}</span>
+							<div class="text-muted small">{{ item.row.project || "" }} · {{ item.row.name }}</div>
 						</div>
 						<div class="tracker-btn-row">
 							<button
-								v-for="b in taskActions(row)"
+								v-for="b in taskActions(item.row)"
 								:key="b.key"
 								class="btn btn-xs"
 								:class="b.key==='approve' ? 'btn-success' : (b.key==='rework' ? 'btn-warning' : 'btn-primary')"
@@ -482,9 +715,16 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 
 			<div v-if="tab==='tickets'" class="tracker-panel">
 				<div v-if="!tickets.length" class="text-muted p-3">{{ __("No tickets") }}</div>
-				<div v-for="row in tickets" :key="row.name" class="tracker-task-row">
+				<div
+					v-for="row in tickets"
+					:key="row.name"
+					class="tracker-task-row"
+					:class="{selected: selectedTicket===row.name}"
+					@click="selectTicket(row.name)"
+				>
 					<strong>{{ row.subject || row.name }}</strong>
 					<span :class="statusClass(row.status)">{{ row.status }}</span>
+					<span class="text-muted small"> · {{ row.project || "" }}</span>
 				</div>
 			</div>
 
@@ -492,22 +732,22 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				<div v-if="!running.length" class="text-muted p-3">{{ __("Nobody running") }}</div>
 				<div v-for="row in running" :key="row.name" class="tracker-task-row">
 					<strong>{{ row.user }}</strong>
-					<span class="tracker-status tracker-status-running">{{ row.status }}</span>
+					<span class="tracker-status tracker-status-working">{{ row.status }}</span>
 					<div class="text-muted small">{{ row.task || row.project || row.name }}</div>
 				</div>
 			</div>
 
 			<div v-if="tab==='review'" class="tracker-panel">
 				<div v-if="!review.length" class="text-muted p-3">{{ __("Nothing pending review") }}</div>
-				<div v-for="row in review" :key="row.name" class="tracker-task-row">
+				<div v-for="row in review" :key="row.name" class="tracker-task-row" @click="selectTask(row.name)">
 					<div class="flex justify-between align-center flex-wrap" style="gap:8px">
 						<div>
 							<strong>{{ row.subject || row.name }}</strong>
 							<span :class="statusClass(row.status)">{{ row.status }}</span>
 						</div>
 						<div class="tracker-btn-row" v-if="caps.can_review">
-							<button class="btn btn-xs btn-success" @click="approve(row.name)">{{ __("Approve") }}</button>
-							<button class="btn btn-xs btn-warning" @click="rework(row.name)">{{ __("Rework") }}</button>
+							<button class="btn btn-xs btn-success" @click.stop="approve(row.name)">{{ __("Approve") }}</button>
+							<button class="btn btn-xs btn-warning" @click.stop="rework(row.name)">{{ __("Rework") }}</button>
 						</div>
 					</div>
 				</div>
@@ -516,20 +756,34 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 		`,
 	};
 
-	let appInstance = null;
 	tracker.vue.mount(el, WorkbenchApp).then((app) => {
-		appInstance = app;
 		wrapper.tracker_vue_app = app;
 	});
 
-	frappe.pages["tracker-workbench"].on_page_show = function () {
-		const root = page.main.find(".tracker-workbench-root")[0];
-		const vm = root && root.__vue_app__ && root.__vue_app__._instance && root.__vue_app__._instance.proxy;
-		// refresh via stored app
-		if (wrapper.tracker_vue_app && wrapper.tracker_vue_app._instance) {
-			const proxy = wrapper.tracker_vue_app._instance.proxy;
-			if (proxy && proxy.refreshTab) proxy.refreshTab();
-			if (proxy && proxy.refreshActive) proxy.refreshActive();
+	page.set_primary_action(__("Refresh"), () => {
+		const proxy =
+			wrapper.tracker_vue_app &&
+			wrapper.tracker_vue_app._instance &&
+			wrapper.tracker_vue_app._instance.proxy;
+		if (proxy) {
+			proxy.loadCaps().then(() => {
+				proxy.refreshActive();
+				proxy.refreshTab();
+			});
 		}
-	};
+	});
+};
+
+frappe.pages["tracker-workbench"].on_page_show = function (wrapper) {
+	const now = Date.now();
+	if (wrapper._tracker_wb_show && now - wrapper._tracker_wb_show < 1000) return;
+	wrapper._tracker_wb_show = now;
+	const proxy =
+		wrapper.tracker_vue_app &&
+		wrapper.tracker_vue_app._instance &&
+		wrapper.tracker_vue_app._instance.proxy;
+	if (proxy) {
+		if (proxy.refreshTab) proxy.refreshTab();
+		if (proxy.refreshActive) proxy.refreshActive();
+	}
 };
