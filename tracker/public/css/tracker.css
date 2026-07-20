@@ -499,3 +499,99 @@
 	flex-wrap: wrap;
 	margin-bottom: 4px;
 }
+
+/* Hours page */
+.tracker-hours .tracker-toolbar {
+	margin-bottom: 14px;
+}
+
+.tracker-hours-grid {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 14px;
+}
+
+@media (min-width: 900px) {
+	.tracker-hours-grid {
+		grid-template-columns: 1fr 1fr;
+	}
+}
+
+.tracker-hours-card {
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--fg-color, var(--card-bg));
+	overflow: hidden;
+	min-height: 200px;
+}
+
+.tracker-hours-card-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 8px;
+	padding: 12px 14px;
+	border-bottom: 1px solid var(--border-color);
+	background: var(--subtle-fg, var(--control-bg, var(--bg-color)));
+}
+
+.tracker-hours-card-head h5 {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 650;
+	color: var(--heading-color, var(--text-color));
+}
+
+.tracker-hours-card-body {
+	padding: 0;
+}
+
+.tracker-hours-card-body .tracker-empty {
+	padding: 36px 16px;
+}
+
+.tracker-hours table.tracker-table {
+	width: 100%;
+	margin: 0;
+	border: none;
+}
+
+.tracker-hours table.tracker-table thead th {
+	font-size: 11px;
+	font-weight: 650;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+	border-bottom: 1px solid var(--border-color);
+	border-top: none;
+	padding: 10px 14px;
+	background: transparent;
+}
+
+.tracker-hours table.tracker-table tbody td {
+	padding: 10px 14px;
+	border-top: 1px solid var(--border-color);
+	vertical-align: middle;
+	font-size: 13px;
+}
+
+.tracker-hours table.tracker-table tbody tr:hover td {
+	background: var(--bg-light-gray, var(--subtle-fg));
+}
+
+.tracker-hours .tracker-hours-num {
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+	text-align: right;
+}
+
+.tracker-hours .tracker-hours-muted {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.tracker-hours .tracker-error {
+	padding: 16px 14px;
+	color: var(--red-600, #dc2626);
+	font-size: 13px;
+}
