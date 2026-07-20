@@ -57,12 +57,25 @@ def get_task_stage(doc) -> str:
 def enrich_task_row(row: dict) -> dict:
 	row = dict(row)
 	row["stage"] = get_task_stage(row)
+	row["assignees"] = _assignees(row)
 	return row
 
 
 def _is_assignee(doc, user: str | None = None) -> bool:
 	user = user or frappe.session.user
 	return user in _assignees(doc)
+
+
+def assert_is_assignee(doc, user: str | None = None) -> None:
+	"""Only people on Task._assign may execute the task (start / submit)."""
+	user = user or frappe.session.user
+	if is_system(user):
+		return
+	if not _is_assignee(doc, user):
+		frappe.throw(
+			_("Only an assigned worker can work on this task."),
+			frappe.PermissionError,
+		)
 
 
 def _can_review_task(doc, user: str | None = None) -> bool:
@@ -92,8 +105,7 @@ def set_in_progress(task: str, user: str | None = None) -> dict:
 	stage = get_task_stage(doc)
 	if stage not in (STAGE_ASSIGNED, STAGE_IN_PROGRESS):
 		frappe.throw(_("Task must be Assigned before starting work."), frappe.ValidationError)
-	if not _is_assignee(doc, user) and not is_lead_or_above(user):
-		frappe.throw(_("Only the assignee can move this task to In Progress."), frappe.PermissionError)
+	assert_is_assignee(doc, user)
 	if doc.status == "Working":
 		return enrich_task_row(doc.as_dict())
 	prev = get_task_stage(doc)
@@ -109,8 +121,7 @@ def submit_for_review(task: str, note: str | None = None, user: str | None = Non
 	stage = get_task_stage(doc)
 	if stage != STAGE_IN_PROGRESS:
 		frappe.throw(_("Only In Progress tasks can be submitted for review."), frappe.ValidationError)
-	if not _is_assignee(doc, user) and not is_lead_or_above(user):
-		frappe.throw(_("Only the assignee can submit for review."), frappe.PermissionError)
+	assert_is_assignee(doc, user)
 	prev = stage
 	doc.status = "Pending Review"
 	doc.save(ignore_permissions=True)
@@ -170,11 +181,12 @@ def request_rework(task: str, note: str, user: str | None = None) -> dict:
 
 
 def mark_working_on_start(task: str, user: str | None = None) -> None:
-	"""Called from activity start: Assigned → In Progress; block Draft / Completed / Ready."""
+	"""Called from activity start: Assigned → In Progress; only assignees may start."""
 	user = user or frappe.session.user
 	if not task:
 		return
 	doc = frappe.get_doc("Task", task)
+	assert_is_assignee(doc, user)
 	stage = get_task_stage(doc)
 	if stage == STAGE_DRAFT:
 		frappe.throw(_("Assign this task before starting activity."), frappe.ValidationError)

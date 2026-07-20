@@ -77,10 +77,19 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				return __("Elapsed") + ": " + `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 			},
 			canStart() {
-				return (
-					!!this.selected &&
-					!(this.active && this.active.status === "Running" && this.active.task === this.selected)
-				);
+				if (!this.selected || this.busy) return false;
+				if (this.active && this.active.status === "Running" && this.active.task === this.selected) {
+					return false;
+				}
+				const row =
+					(this.tasks || []).find((t) => t.name === this.selected) ||
+					(this.overview.items || []).find((t) => t.name === this.selected) ||
+					(this.review || []).find((t) => t.name === this.selected);
+				if (row && Array.isArray(row.assignees) && row.assignees.length) {
+					return row.assignees.includes(frappe.session.user);
+				}
+				// Unknown assignees (e.g. overview without enrich) — allow click; backend enforces
+				return true;
 			},
 			canPause() {
 				return !!(this.active && this.active.status === "Running");
@@ -460,9 +469,10 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				);
 			},
 			async newTask() {
-				const peopleOpts = (this.people || []).map((p) => p.user).join("\n");
-				frappe.prompt(
-					[
+				const people = this.people || [];
+				const d = new frappe.ui.Dialog({
+					title: __("New Task"),
+					fields: [
 						{ fieldname: "subject", fieldtype: "Data", label: __("Subject"), reqd: 1 },
 						{
 							fieldname: "project",
@@ -472,27 +482,50 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 						},
 						{
 							fieldname: "assign_to",
-							fieldtype: "Select",
-							options: "\n" + peopleOpts,
-							label: __("Assign To"),
+							fieldtype: "MultiSelectList",
+							label: __("Assign To (multiple)"),
+							get_data: (txt) => {
+								const q = (txt || "").toLowerCase();
+								return people
+									.filter(
+										(p) =>
+											!q ||
+											(p.user || "").toLowerCase().includes(q) ||
+											(p.full_name || "").toLowerCase().includes(q)
+									)
+									.map((p) => ({
+										value: p.user,
+										description: p.full_name || p.user,
+									}));
+							},
 						},
 					],
-					async (values) => {
+					primary_action_label: __("Create"),
+					primary_action: async (values) => {
 						try {
-							await this.call("tracker.api.v1.tasks.create_task", values);
+							const assign_to = Array.isArray(values.assign_to)
+								? values.assign_to.join(",")
+								: values.assign_to;
+							await this.call("tracker.api.v1.tasks.create_task", {
+								subject: values.subject,
+								project: values.project,
+								assign_to,
+							});
+							d.hide();
 							frappe.show_alert({ message: __("Task created"), indicator: "green" });
 							await this.refreshTab();
 						} catch (e) {
 							frappe.msgprint(String(e.message || e));
 						}
 					},
-					__("New Task")
-				);
+				});
+				d.show();
 			},
 			async newTicket() {
-				const peopleOpts = (this.people || []).map((p) => p.user).join("\n");
-				frappe.prompt(
-					[
+				const people = this.people || [];
+				const d = new frappe.ui.Dialog({
+					title: __("New Ticket"),
+					fields: [
 						{ fieldname: "subject", fieldtype: "Data", label: __("Subject"), reqd: 1 },
 						{
 							fieldname: "project",
@@ -507,14 +540,37 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 						},
 						{
 							fieldname: "assign_to",
-							fieldtype: "Select",
-							options: "\n" + peopleOpts,
-							label: __("Assign To"),
+							fieldtype: "MultiSelectList",
+							label: __("Assign To (multiple)"),
+							get_data: (txt) => {
+								const q = (txt || "").toLowerCase();
+								return people
+									.filter(
+										(p) =>
+											!q ||
+											(p.user || "").toLowerCase().includes(q) ||
+											(p.full_name || "").toLowerCase().includes(q)
+									)
+									.map((p) => ({
+										value: p.user,
+										description: p.full_name || p.user,
+									}));
+							},
 						},
 					],
-					async (values) => {
+					primary_action_label: __("Create"),
+					primary_action: async (values) => {
 						try {
-							await this.call("tracker.api.v1.tickets.create_ticket", values);
+							const assign_to = Array.isArray(values.assign_to)
+								? values.assign_to.join(",")
+								: values.assign_to;
+							await this.call("tracker.api.v1.tickets.create_ticket", {
+								subject: values.subject,
+								project: values.project,
+								description: values.description,
+								assign_to,
+							});
+							d.hide();
 							frappe.show_alert({
 								message: __("Ticket created"),
 								indicator: "green",
@@ -525,8 +581,8 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 							frappe.msgprint(String(e.message || e));
 						}
 					},
-					__("New Ticket")
-				);
+				});
+				d.show();
 			},
 			async openAssign() {
 				const isTicket = this.tab === "tickets";
@@ -536,36 +592,64 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					frappe.msgprint(__("Select a task or ticket first."));
 					return;
 				}
-				if (!(this.people || []).length) {
+				const people = this.people || [];
+				if (!people.length) {
 					frappe.msgprint(__("No assignable people in your org tree."));
 					return;
 				}
-				const peopleOpts = (this.people || []).map((p) => p.user).join("\n");
-				frappe.prompt(
-					[
+				const d = new frappe.ui.Dialog({
+					title: __("Assign") + " " + doctype + " — " + name,
+					fields: [
 						{
-							fieldname: "user",
-							fieldtype: "Select",
-							options: "\n" + peopleOpts,
-							label: __("Assignee"),
+							fieldname: "users",
+							fieldtype: "MultiSelectList",
+							label: __("Assignees (multiple)"),
 							reqd: 1,
+							get_data: (txt) => {
+								const q = (txt || "").toLowerCase();
+								return people
+									.filter(
+										(p) =>
+											!q ||
+											(p.user || "").toLowerCase().includes(q) ||
+											(p.full_name || "").toLowerCase().includes(q)
+									)
+									.map((p) => ({
+										value: p.user,
+										description: p.full_name || p.user,
+									}));
+							},
 						},
 					],
-					async (values) => {
+					primary_action_label: __("Assign"),
+					primary_action: async (values) => {
 						try {
+							const users = Array.isArray(values.users)
+								? values.users.join(",")
+								: values.users;
 							await this.call("tracker.api.v1.hierarchy.assign", {
 								doctype,
 								name,
-								user: values.user,
+								users,
 							});
+							d.hide();
 							frappe.show_alert({ message: __("Assigned"), indicator: "green" });
 							await this.refreshTab();
 						} catch (e) {
 							frappe.msgprint(String(e.message || e));
 						}
 					},
-					__("Assign") + " " + doctype
-				);
+				});
+				d.show();
+			},
+			assigneeText(row) {
+				const list = (row && row.assignees) || [];
+				if (!list.length) return __("Unassigned");
+				return list.join(", ");
+			},
+			isAssignedToMe(row) {
+				const list = (row && row.assignees) || [];
+				return list.includes(frappe.session.user);
 			},
 			async submitTimesheets() {
 				frappe.prompt(
@@ -638,7 +722,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					<span v-if="roleLabel" class="tracker-role-chrome">{{ roleLabel }}</span>
 				</div>
 			</div>
-			<p class="tracker-brand-sub">{{ __("Select a task, then Start / Pause / Stop. Time writes to today’s Timesheet draft.") }}</p>
+			<p class="tracker-brand-sub">{{ __("Select a task assigned to you, then Start / Pause / Stop. Leads can assign multiple workers.") }}</p>
 
 			<div
 				class="tracker-active"
@@ -735,6 +819,8 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 								<span v-if="row.project">{{ row.project }}</span>
 								<span class="dot" v-if="row.project">·</span>
 								<span>{{ row.name }}</span>
+								<span class="dot">·</span>
+								<span>{{ assigneeText(row) }}</span>
 							</div>
 						</div>
 						<div class="tracker-btn-row">
@@ -771,6 +857,8 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 								<span v-if="item.row.project">{{ item.row.project }}</span>
 								<span class="dot" v-if="item.row.project">·</span>
 								<span>{{ item.row.name }}</span>
+								<span class="dot">·</span>
+								<span>{{ assigneeText(item.row) }}</span>
 							</div>
 						</div>
 						<div class="tracker-btn-row">
