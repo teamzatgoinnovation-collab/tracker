@@ -584,35 +584,44 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			},
 		},
 		template: `
-		<div class="tracker-workbench">
+		<div class="tracker-workbench tracker-page">
 			<div class="tracker-brand">
-				<span class="tracker-brand-title">{{ __("Task Management") }}</span>
-				<span v-if="roleLabel" class="tracker-role-chrome">{{ roleLabel }}</span>
+				<div class="tracker-brand-left">
+					<h2 class="tracker-brand-title">{{ __("Task Management") }}</h2>
+					<span v-if="roleLabel" class="tracker-role-chrome">{{ roleLabel }}</span>
+				</div>
 			</div>
+			<p class="tracker-brand-sub">{{ __("Select a task, then Start / Pause / Stop. Time writes to today’s Timesheet draft.") }}</p>
 
-			<div class="tracker-active card p-3 mb-3">
-				<div class="flex justify-between align-center flex-wrap" style="gap:12px">
-					<div>
-						<div class="text-muted">{{ __("Active session") }}</div>
-						<div class="tracker-active-label font-bold">{{ activeLabel }}</div>
-						<div class="tracker-elapsed text-muted small" v-if="active">{{ elapsedText }}</div>
-					</div>
-					<div class="tracker-btn-row">
-						<button class="btn btn-primary btn-sm" :disabled="!canStart || busy" @click="actStart">{{ __("Start") }}</button>
-						<button class="btn btn-secondary btn-sm" :disabled="!canPause || busy" @click="actPause">{{ __("Pause") }}</button>
-						<button class="btn btn-danger btn-sm" :disabled="!canStop || busy" @click="actStop">{{ __("Stop") }}</button>
-					</div>
+			<div
+				class="tracker-active"
+				:class="{
+					'is-idle': !active,
+					'is-running': active && active.status === 'Running',
+					'is-paused': active && active.status === 'Paused'
+				}"
+			>
+				<div class="tracker-active-meta">
+					<div class="tracker-active-kicker">{{ __("Active session") }}</div>
+					<div class="tracker-active-label">{{ activeLabel }}</div>
+					<div class="tracker-elapsed" v-if="active">{{ elapsedText }}</div>
+					<div class="tracker-elapsed" v-else>{{ __("Select a task below to begin") }}</div>
+				</div>
+				<div class="tracker-btn-row">
+					<button class="btn btn-primary btn-sm" :disabled="!canStart || busy" @click="actStart">{{ __("Start") }}</button>
+					<button class="btn btn-default btn-sm" :disabled="!canPause || busy" @click="actPause">{{ __("Pause") }}</button>
+					<button class="btn btn-danger btn-sm" :disabled="!canStop || busy" @click="actStop">{{ __("Stop") }}</button>
 				</div>
 			</div>
 
-			<div class="tracker-toolbar mb-3 flex flex-wrap" style="gap:8px;align-items:center">
-				<select class="form-control" style="width:auto" v-model="scope" @change="loadTasks" v-if="tab==='tasks' || tab==='tickets'">
+			<div class="tracker-toolbar">
+				<select class="form-control" v-model="scope" @change="refreshTab" v-if="tab==='tasks' || tab==='tickets'">
 					<option value="mine">{{ __("My Work") }}</option>
 					<option value="team" v-if="caps.is_lead_or_above">{{ __("Team") }}</option>
 					<option value="both" v-if="caps.is_lead_or_above">{{ __("Mine + Team") }}</option>
 				</select>
-				<input class="form-control" style="width:10rem" v-model="projectFilter" :placeholder="__('Project')" v-if="tab==='tasks' || tab==='tickets'" @change="refreshTab" />
-				<input class="form-control" style="width:8rem" v-model="statusFilter" :placeholder="__('Status')" v-if="tab==='tasks'" @change="loadTasks" />
+				<input class="form-control" v-model="projectFilter" :placeholder="__('Project')" v-if="tab==='tasks' || tab==='tickets'" @change="refreshTab" />
+				<input class="form-control" v-model="statusFilter" :placeholder="__('Status')" v-if="tab==='tasks'" @change="loadTasks" />
 				<button class="btn btn-default btn-sm" v-if="caps.can_manage_work" @click="newProject">{{ __("New Project") }}</button>
 				<button class="btn btn-default btn-sm" v-if="caps.can_manage_work" @click="newTask">{{ __("New Task") }}</button>
 				<button class="btn btn-default btn-sm" v-if="caps.can_manage_work" @click="newTicket">{{ __("New Ticket") }}</button>
@@ -620,7 +629,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				<button class="btn btn-default btn-sm" v-if="caps.can_submit_timesheets" @click="submitTimesheets">{{ __("Submit team timesheets") }}</button>
 			</div>
 
-			<ul class="nav nav-tabs tracker-tabs mb-2">
+			<ul class="nav nav-tabs tracker-tabs">
 				<li class="nav-item" v-if="showOverview">
 					<a class="nav-link" :class="{active: tab==='overview'}" href="#" @click.prevent="setTab('overview')">{{ __("Overview") }}</a>
 				</li>
@@ -639,7 +648,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			</ul>
 
 			<div v-if="tab==='overview'" class="tracker-panel">
-				<div class="tracker-chip-row mb-3">
+				<div class="tracker-chip-row">
 					<button
 						v-for="chip in statusChips"
 						:key="chip.status"
@@ -657,7 +666,10 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 						{{ __("Draft Timesheets") }} <span class="badge">{{ overview.timesheet_drafts }}</span>
 					</span>
 				</div>
-				<div v-if="!(overview.items||[]).length" class="text-muted p-3">{{ __("Nothing in this status") }}</div>
+				<div v-if="!(overview.items||[]).length" class="tracker-empty">
+					<div class="tracker-empty-title">{{ __("Nothing in this status") }}</div>
+					<div class="tracker-empty-hint">{{ __("Pick another status chip or assign work from Tasks.") }}</div>
+				</div>
 				<div
 					v-for="row in overview.items"
 					:key="row.name"
@@ -665,11 +677,15 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					:class="{selected: selected===row.name}"
 					@click="selectTask(row.name)"
 				>
-					<div class="flex justify-between align-center flex-wrap" style="gap:8px">
+					<div class="tracker-row-main">
 						<div>
-							<strong>{{ row.subject || row.name }}</strong>
+							<span class="tracker-row-title">{{ row.subject || row.name }}</span>
 							<span :class="statusClass(row.status)">{{ row.status }}</span>
-							<div class="text-muted small">{{ row.project || "" }} · {{ row.name }}</div>
+							<div class="tracker-row-meta">
+								<span v-if="row.project">{{ row.project }}</span>
+								<span class="dot" v-if="row.project">·</span>
+								<span>{{ row.name }}</span>
+							</div>
 						</div>
 						<div class="tracker-btn-row">
 							<button
@@ -685,20 +701,27 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			</div>
 
 			<div v-if="tab==='tasks'" class="tracker-panel">
-				<div v-if="!taskTree.length" class="text-muted p-3">{{ __("No tasks") }}</div>
+				<div v-if="!taskTree.length" class="tracker-empty">
+					<div class="tracker-empty-title">{{ __("No tasks yet") }}</div>
+					<div class="tracker-empty-hint">{{ __("Create a project and task, or ask your lead to assign work.") }}</div>
+				</div>
 				<div
 					v-for="item in taskTree"
 					:key="item.row.name"
 					class="tracker-task-row"
 					:class="{selected: selected===item.row.name}"
-					:style="{paddingLeft: (item.depth * 16 + 12) + 'px'}"
+					:style="{paddingLeft: (item.depth * 18 + 14) + 'px'}"
 					@click="selectTask(item.row.name)"
 				>
-					<div class="flex justify-between align-center flex-wrap" style="gap:8px">
+					<div class="tracker-row-main">
 						<div>
-							<strong>{{ item.row.subject || item.row.name }}</strong>
+							<span class="tracker-row-title">{{ item.row.subject || item.row.name }}</span>
 							<span :class="statusClass(item.row.status)">{{ item.row.status }}</span>
-							<div class="text-muted small">{{ item.row.project || "" }} · {{ item.row.name }}</div>
+							<div class="tracker-row-meta">
+								<span v-if="item.row.project">{{ item.row.project }}</span>
+								<span class="dot" v-if="item.row.project">·</span>
+								<span>{{ item.row.name }}</span>
+							</div>
 						</div>
 						<div class="tracker-btn-row">
 							<button
@@ -714,7 +737,10 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			</div>
 
 			<div v-if="tab==='tickets'" class="tracker-panel">
-				<div v-if="!tickets.length" class="text-muted p-3">{{ __("No tickets") }}</div>
+				<div v-if="!tickets.length" class="tracker-empty">
+					<div class="tracker-empty-title">{{ __("No tickets") }}</div>
+					<div class="tracker-empty-hint">{{ __("Tickets appear here when Issues are assigned in your scope.") }}</div>
+				</div>
 				<div
 					v-for="row in tickets"
 					:key="row.name"
@@ -722,27 +748,45 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					:class="{selected: selectedTicket===row.name}"
 					@click="selectTicket(row.name)"
 				>
-					<strong>{{ row.subject || row.name }}</strong>
-					<span :class="statusClass(row.status)">{{ row.status }}</span>
-					<span class="text-muted small"> · {{ row.project || "" }}</span>
+					<div class="tracker-row-main">
+						<div>
+							<span class="tracker-row-title">{{ row.subject || row.name }}</span>
+							<span :class="statusClass(row.status)">{{ row.status }}</span>
+							<div class="tracker-row-meta">
+								<span v-if="row.project">{{ row.project }}</span>
+								<span class="dot" v-if="row.project">·</span>
+								<span>{{ row.name }}</span>
+							</div>
+						</div>
+					</div>
 				</div>
 			</div>
 
 			<div v-if="tab==='running'" class="tracker-panel">
-				<div v-if="!running.length" class="text-muted p-3">{{ __("Nobody running") }}</div>
-				<div v-for="row in running" :key="row.name" class="tracker-task-row">
-					<strong>{{ row.user }}</strong>
-					<span class="tracker-status tracker-status-working">{{ row.status }}</span>
-					<div class="text-muted small">{{ row.task || row.project || row.name }}</div>
+				<div v-if="!running.length" class="tracker-empty">
+					<div class="tracker-empty-title">{{ __("Nobody running") }}</div>
+					<div class="tracker-empty-hint">{{ __("Live timers for your team show up here.") }}</div>
+				</div>
+				<div v-for="row in running" :key="row.name" class="tracker-task-row" style="cursor:default">
+					<div class="tracker-row-main">
+						<div>
+							<span class="tracker-row-title">{{ row.user }}</span>
+							<span class="tracker-status tracker-status-working">{{ row.status }}</span>
+							<div class="tracker-row-meta">{{ row.task || row.project || row.name }}</div>
+						</div>
+					</div>
 				</div>
 			</div>
 
 			<div v-if="tab==='review'" class="tracker-panel">
-				<div v-if="!review.length" class="text-muted p-3">{{ __("Nothing pending review") }}</div>
+				<div v-if="!review.length" class="tracker-empty">
+					<div class="tracker-empty-title">{{ __("Nothing pending review") }}</div>
+					<div class="tracker-empty-hint">{{ __("Tasks submitted for review will land in this queue.") }}</div>
+				</div>
 				<div v-for="row in review" :key="row.name" class="tracker-task-row" @click="selectTask(row.name)">
-					<div class="flex justify-between align-center flex-wrap" style="gap:8px">
+					<div class="tracker-row-main">
 						<div>
-							<strong>{{ row.subject || row.name }}</strong>
+							<span class="tracker-row-title">{{ row.subject || row.name }}</span>
 							<span :class="statusClass(row.status)">{{ row.status }}</span>
 						</div>
 						<div class="tracker-btn-row" v-if="caps.can_review">

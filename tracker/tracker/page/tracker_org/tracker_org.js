@@ -267,63 +267,120 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 					}
 				);
 			},
+			roleBadgeClass(role) {
+				const r = (role || "").toLowerCase();
+				if (r === "top") return "tracker-role-badge role-top";
+				if (r === "sub") return "tracker-role-badge role-sub";
+				if (r === "worker") return "tracker-role-badge role-worker";
+				return "tracker-role-badge";
+			},
 		},
 		template: `
-		<div class="tracker-org">
+		<div class="tracker-org tracker-page">
 			<div class="tracker-brand">
-				<span class="tracker-brand-title">{{ __("Task Management Org Setup") }}</span>
+				<div class="tracker-brand-left">
+					<h2 class="tracker-brand-title">{{ __("Org Setup") }}</h2>
+				</div>
+				<span class="tracker-company-pill">{{ __("Company") }}: <strong>{{ company || "—" }}</strong></span>
 			</div>
-			<p class="text-muted">
-				{{ __("Set Tracker org role, reports_to, and Frappe role. Assign only flows down this tree.") }}
-			</p>
-			<p class="text-muted">
-				{{ __("Company") }}: <strong>{{ company || "—" }}</strong>
+			<p class="tracker-brand-sub">
+				{{ __("Create Top (admin), then assign Sub / Worker with company and branch. Hierarchy follows reports_to.") }}
 			</p>
 
-			<div class="mb-3" v-if="isSystemManager" style="display:flex;gap:8px;flex-wrap:wrap">
-				<button class="btn btn-secondary btn-sm" @click="seedDemo">{{ __("Seed demo Top / Sub / Worker") }}</button>
+			<div class="tracker-seed-bar" v-if="isSystemManager">
+				<button class="btn btn-default btn-sm" @click="seedDemo">{{ __("Seed demo Top / Sub / Worker") }}</button>
 				<button class="btn btn-warning btn-sm" @click="seedWork">{{ __("Seed demo work data") }}</button>
 			</div>
 
-			<div class="tracker-org-card mb-3" v-if="caps.can_assign_org">
-				<h5>{{ __("Assign person") }}</h5>
-				<div class="tracker-form-grid">
-					<input class="form-control" v-model="assignForm.email" :placeholder="__('Email')" />
-					<input class="form-control" v-model="assignForm.full_name" :placeholder="__('Full name')" />
-					<input class="form-control" v-model="assignForm.company" :placeholder="__('Company')" />
-					<input class="form-control" v-if="hasBranch" v-model="assignForm.branch" :placeholder="__('Branch')" />
-					<select class="form-control" v-model="assignForm.role">
-						<option v-for="r in roleOptions" :key="r" :value="r">{{ r }}</option>
-					</select>
-					<button class="btn btn-primary btn-sm" :disabled="busy" @click="assignMember">{{ __("Assign") }}</button>
+			<div class="tracker-page-grid">
+				<div class="tracker-org-tree">
+					<div class="tracker-org-tree-head">
+						<div>
+							<div class="tracker-section-title">{{ __("Organization tree") }}</div>
+							<div class="tracker-section-hint" style="margin:0">{{ __("Click Edit to set org role and reports_to.") }}</div>
+						</div>
+						<span class="text-muted small">{{ treeRows.length }} {{ __("people") }}</span>
+					</div>
+					<div v-if="!treeRows.length" class="tracker-empty">
+						<div class="tracker-empty-title">{{ __("No active employees") }}</div>
+						<div class="tracker-empty-hint">{{ __("Create a Top first, then assign Sub and Worker accounts.") }}</div>
+					</div>
+					<div
+						v-for="row in treeRows"
+						:key="row.emp.name"
+						class="tracker-org-row"
+						:style="{paddingLeft: (row.depth * 18 + 14) + 'px'}"
+					>
+						<div class="tracker-org-person">
+							<strong>{{ row.emp.employee_name || row.emp.name }}</strong>
+							<span class="email">{{ row.emp.user_id || __("no user") }}</span>
+						</div>
+						<span :class="roleBadgeClass(row.emp.tracker_org_role)">{{ row.emp.tracker_org_role || "—" }}</span>
+						<span class="text-muted small" v-if="row.emp.branch">{{ row.emp.branch }}</span>
+						<span class="text-muted small">{{ (row.emp.roles || []).join(", ") || "—" }}</span>
+						<button class="btn btn-xs btn-default" @click="editEmployee(row.emp.name)">{{ __("Edit") }}</button>
+					</div>
 				</div>
-			</div>
 
-			<div class="tracker-org-card mb-3" v-if="caps.can_create_top || isSystemManager">
-				<h5>{{ __("Create Top") }} <span class="text-muted small">({{ __("System Manager") }})</span></h5>
-				<div class="tracker-form-grid">
-					<input class="form-control" v-model="topForm.email" :placeholder="__('Email')" />
-					<input class="form-control" v-model="topForm.full_name" :placeholder="__('Full name')" />
-					<input class="form-control" v-model="topForm.company" :placeholder="__('Company')" />
-					<input class="form-control" v-if="hasBranch" v-model="topForm.branch" :placeholder="__('Branch')" />
-					<button class="btn btn-primary btn-sm" :disabled="busy" @click="createTop">{{ __("Create Top") }}</button>
+				<div>
+					<div class="tracker-org-card mb-3" v-if="caps.can_assign_org">
+						<h5>{{ __("Assign person") }}</h5>
+						<p class="tracker-section-hint">{{ __("Adds User + Employee under your tree as Sub or Worker.") }}</p>
+						<div class="tracker-form-grid">
+							<div class="tracker-field">
+								<label>{{ __("Email") }}</label>
+								<input class="form-control" type="email" v-model="assignForm.email" />
+							</div>
+							<div class="tracker-field">
+								<label>{{ __("Full name") }}</label>
+								<input class="form-control" v-model="assignForm.full_name" />
+							</div>
+							<div class="tracker-field">
+								<label>{{ __("Company") }}</label>
+								<input class="form-control" v-model="assignForm.company" />
+							</div>
+							<div class="tracker-field" v-if="hasBranch">
+								<label>{{ __("Branch") }}</label>
+								<input class="form-control" v-model="assignForm.branch" />
+							</div>
+							<div class="tracker-field">
+								<label>{{ __("Role") }}</label>
+								<select class="form-control" v-model="assignForm.role">
+									<option v-for="r in roleOptions" :key="r" :value="r">{{ r }}</option>
+								</select>
+							</div>
+							<div class="tracker-field tracker-field-action">
+								<button class="btn btn-primary btn-sm" :disabled="busy" @click="assignMember">{{ __("Assign") }}</button>
+							</div>
+						</div>
+					</div>
+
+					<div class="tracker-org-card" v-if="caps.can_create_top || isSystemManager">
+						<h5>{{ __("Create Top") }}</h5>
+						<p class="tracker-section-hint">{{ __("System Manager only — company manager for Task Management.") }}</p>
+						<div class="tracker-form-grid">
+							<div class="tracker-field">
+								<label>{{ __("Email") }}</label>
+								<input class="form-control" type="email" v-model="topForm.email" />
+							</div>
+							<div class="tracker-field">
+								<label>{{ __("Full name") }}</label>
+								<input class="form-control" v-model="topForm.full_name" />
+							</div>
+							<div class="tracker-field">
+								<label>{{ __("Company") }}</label>
+								<input class="form-control" v-model="topForm.company" />
+							</div>
+							<div class="tracker-field" v-if="hasBranch">
+								<label>{{ __("Branch") }}</label>
+								<input class="form-control" v-model="topForm.branch" />
+							</div>
+							<div class="tracker-field tracker-field-action">
+								<button class="btn btn-primary btn-sm" :disabled="busy" @click="createTop">{{ __("Create Top") }}</button>
+							</div>
+						</div>
+					</div>
 				</div>
-			</div>
-
-			<h5>{{ __("Employees") }}</h5>
-			<div v-if="!treeRows.length" class="text-muted">{{ __("No active employees.") }}</div>
-			<div
-				v-for="row in treeRows"
-				:key="row.emp.name"
-				class="tracker-org-row"
-				:style="{paddingLeft: (row.depth * 18) + 'px'}"
-			>
-				<strong>{{ row.emp.employee_name || row.emp.name }}</strong>
-				<span class="text-muted">{{ row.emp.user_id || __("no user") }}</span>
-				<span class="badge">{{ row.emp.tracker_org_role || "—" }}</span>
-				<span class="text-muted small" v-if="row.emp.branch">{{ row.emp.branch }}</span>
-				<span class="text-muted small">{{ (row.emp.roles || []).join(", ") || "—" }}</span>
-				<button class="btn btn-xs btn-default" @click="editEmployee(row.emp.name)">{{ __("Edit") }}</button>
 			</div>
 		</div>
 		`,
