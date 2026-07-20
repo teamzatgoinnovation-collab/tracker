@@ -168,10 +168,16 @@ def _ensure_desk_entry() -> None:
 			except Exception:
 				pass
 
+	# Sync may name the sidebar "Tracker" or "Task Management"
+	sidebar_name = None
+	for candidate in ("Tracker", "Task Management"):
+		if frappe.db.exists("Workspace Sidebar", candidate):
+			sidebar_name = candidate
+			break
+
 	if frappe.db.exists("Module Def", "Tracker"):
-		if frappe.db.exists("Workspace Sidebar", "Tracker"):
-			sb = frappe.get_doc("Workspace Sidebar", "Tracker")
-			# Keep app/module wired; refill items if empty
+		if sidebar_name:
+			sb = frappe.get_doc("Workspace Sidebar", sidebar_name)
 			changed = False
 			if sb.app != "tracker":
 				sb.app = "tracker"
@@ -187,10 +193,11 @@ def _ensure_desk_entry() -> None:
 			if changed:
 				_save_ignore_links(sb)
 		else:
+			sidebar_name = "Tracker"
 			sb = frappe.get_doc(
 				{
 					"doctype": "Workspace Sidebar",
-					"name": "Tracker",
+					"name": sidebar_name,
 					"title": "Task Management",
 					"header_icon": "project",
 					"module": "Tracker",
@@ -204,7 +211,7 @@ def _ensure_desk_entry() -> None:
 
 	icons = frappe.get_all("Desktop Icon", filters={"app": "tracker"}, pluck="name")
 	if not icons:
-		if frappe.db.exists("Workspace Sidebar", "Tracker"):
+		if sidebar_name and frappe.db.exists("Workspace Sidebar", sidebar_name):
 			icon = frappe.get_doc(
 				{
 					"doctype": "Desktop Icon",
@@ -212,7 +219,7 @@ def _ensure_desk_entry() -> None:
 					"app": "tracker",
 					"icon_type": "Link",
 					"link_type": "Workspace Sidebar",
-					"link_to": "Tracker",
+					"link_to": sidebar_name,
 					"icon": "project",
 					"standard": 1,
 					"hidden": 0,
@@ -230,8 +237,8 @@ def _ensure_desk_entry() -> None:
 			if doc.link_type != "Workspace Sidebar":
 				doc.link_type = "Workspace Sidebar"
 				changed = True
-			if doc.link_to != "Tracker" and frappe.db.exists("Workspace Sidebar", "Tracker"):
-				doc.link_to = "Tracker"
+			if sidebar_name and doc.link_to != sidebar_name:
+				doc.link_to = sidebar_name
 				changed = True
 			if doc.hidden:
 				doc.hidden = 0
@@ -245,9 +252,8 @@ def _ensure_desk_entry() -> None:
 		if frappe.get_meta("Workspace").has_field("label"):
 			frappe.db.set_value("Workspace", "Tracker", "label", "Task Management", update_modified=False)
 
-	# Keep sidebar title branded after any earlier insert
-	if frappe.db.exists("Workspace Sidebar", "Tracker"):
-		sb = frappe.get_doc("Workspace Sidebar", "Tracker")
+	if sidebar_name and frappe.db.exists("Workspace Sidebar", sidebar_name):
+		sb = frappe.get_doc("Workspace Sidebar", sidebar_name)
 		changed = False
 		if sb.title != "Task Management":
 			sb.title = "Task Management"
