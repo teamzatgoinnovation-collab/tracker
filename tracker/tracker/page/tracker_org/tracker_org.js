@@ -1,7 +1,7 @@
 frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
-		title: __("Task Management Org"),
+		title: __("Task Management Org Setup"),
 		single_column: true,
 	});
 
@@ -43,6 +43,27 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 				if (this.caps.can_create_worker) opts.push("Worker");
 				return opts.length ? opts : ["Sub", "Worker"];
 			},
+			treeRows() {
+				const rows = this.employees || [];
+				const byName = {};
+				rows.forEach((e) => (byName[e.name] = e));
+				const roots = rows.filter((e) => !e.reports_to || !byName[e.reports_to]);
+				const childrenOf = (parent) => rows.filter((e) => e.reports_to === parent);
+				const out = [];
+				const walk = (emp, depth) => {
+					out.push({ emp, depth });
+					childrenOf(emp.name).forEach((c) => walk(c, depth + 1));
+				};
+				roots.forEach((r) => walk(r, 0));
+				return out;
+			},
+			isSystemManager() {
+				return (
+					frappe.session.user === "Administrator" ||
+					(frappe.user_roles || []).includes("System Manager") ||
+					!!this.caps.can_create_top
+				);
+			},
 		},
 		mounted() {
 			this.refresh();
@@ -56,7 +77,10 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 						callback: (r) => {
 							const msg = r.message;
 							if (msg && msg.success === false) {
-								const err = (msg.error && msg.error.message) || "Request failed";
+								const err =
+									(msg.error && msg.error.message) ||
+									msg.message ||
+									"Request failed";
 								reject(new Error(err));
 								return;
 							}
@@ -74,13 +98,14 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 					]);
 					this.company = (tree && tree.company) || "";
 					this.employees = (tree && tree.employees) || [];
-					this.hasBranch = this.employees.some((e) => e.branch != null && e.branch !== undefined) ||
-						this.employees.some((e) => "branch" in (e || {}));
+					this.hasBranch = this.employees.some((e) =>
+						Object.prototype.hasOwnProperty.call(e || {}, "branch")
+					);
 					this.caps = {
-						can_create_top: !!caps.can_create_top,
-						can_assign_org: !!caps.can_assign_org,
-						can_create_sub: !!caps.can_create_sub,
-						can_create_worker: !!caps.can_create_worker,
+						can_create_top: !!(caps && caps.can_create_top),
+						can_assign_org: !!(caps && caps.can_assign_org),
+						can_create_sub: !!(caps && caps.can_create_sub),
+						can_create_worker: !!(caps && caps.can_create_worker),
 					};
 					if (!this.assignForm.company) this.assignForm.company = this.company;
 					if (!this.topForm.company) this.topForm.company = this.company;
@@ -88,52 +113,131 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 						this.assignForm.role = this.roleOptions[0];
 					}
 				} catch (e) {
-					frappe.msgprint({ title: __("Org"), message: String(e.message || e), indicator: "red" });
+					frappe.msgprint({
+						title: __("Org"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
 				}
 			},
 			showPassword(pwd, email) {
 				if (!pwd) return;
 				frappe.msgprint({
 					title: __("Temporary password"),
-					message: __("User {0} temporary password: <code>{1}</code>", [email, pwd]),
-					indicator: "green",
+					message: __(
+						"Copy this password now — it will not be shown again.<br>User {0}: <code>{1}</code>",
+						[frappe.utils.escape_html(email || ""), frappe.utils.escape_html(String(pwd))]
+					),
+					indicator: "orange",
 				});
 			},
 			async assignMember() {
 				if (!this.caps.can_assign_org) return;
+				if (!this.assignForm.email || !this.assignForm.full_name || !this.assignForm.company) {
+					frappe.msgprint(__("Email, full name, and company are required."));
+					return;
+				}
 				this.busy = true;
 				try {
 					const args = { ...this.assignForm };
 					if (!args.branch) delete args.branch;
-					const data = await this.call("tracker.api.v1.hierarchy.assign_org_member", args);
+					const data = await this.call(
+						"tracker.api.v1.hierarchy.assign_org_member",
+						args
+					);
 					this.showPassword(data && data.temporary_password, args.email);
 					frappe.show_alert({ message: __("Member assigned"), indicator: "green" });
 					this.assignForm.email = "";
 					this.assignForm.full_name = "";
 					await this.refresh();
 				} catch (e) {
-					frappe.msgprint(String(e.message || e));
+					frappe.msgprint({
+						title: __("Assign failed"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
 				} finally {
 					this.busy = false;
 				}
 			},
 			async createTop() {
-				if (!this.caps.can_create_top) return;
+				if (!this.caps.can_create_top && !this.isSystemManager) return;
+				if (!this.topForm.email || !this.topForm.full_name || !this.topForm.company) {
+					frappe.msgprint(__("Email, full name, and company are required."));
+					return;
+				}
 				this.busy = true;
 				try {
 					const args = { ...this.topForm };
 					if (!args.branch) delete args.branch;
-					const data = await this.call("tracker.api.v1.hierarchy.create_top_member", args);
+					const data = await this.call(
+						"tracker.api.v1.hierarchy.create_top_member",
+						args
+					);
 					this.showPassword(data && data.temporary_password, args.email);
 					frappe.show_alert({ message: __("Top created"), indicator: "green" });
 					this.topForm.email = "";
 					this.topForm.full_name = "";
 					await this.refresh();
 				} catch (e) {
-					frappe.msgprint(String(e.message || e));
+					frappe.msgprint({
+						title: __("Create Top failed"),
+						message: String(e.message || e),
+						indicator: "red",
+					});
 				} finally {
 					this.busy = false;
 				}
+			},
+			editEmployee(name) {
+				const emp = (this.employees || []).find((e) => e.name === name);
+				if (!emp) return;
+				const d = new frappe.ui.Dialog({
+					title: __("Edit org") + ": " + (emp.employee_name || name),
+					fields: [
+						{
+							fieldname: "tracker_org_role",
+							label: __("Tracker Org Role"),
+							fieldtype: "Select",
+							options: "\nTop\nSub\nWorker",
+							default: emp.tracker_org_role || "",
+						},
+						{
+							fieldname: "reports_to",
+							label: __("Reports To"),
+							fieldtype: "Link",
+							options: "Employee",
+							default: emp.reports_to || "",
+						},
+						{
+							fieldname: "tracker_role",
+							label: __("Frappe Role"),
+							fieldtype: "Select",
+							options: "\nTracker Top\nTracker Sub\nTracker Worker",
+							default: (emp.roles && emp.roles[0]) || "",
+						},
+					],
+					primary_action_label: __("Save"),
+					primary_action: async (values) => {
+						try {
+							await this.call("tracker.api.v1.hierarchy.update_employee_org", {
+								employee: name,
+								tracker_org_role: values.tracker_org_role || "",
+								reports_to: values.reports_to || "",
+								tracker_role: values.tracker_role || "",
+							});
+							d.hide();
+							await this.refresh();
+						} catch (e) {
+							frappe.msgprint({
+								title: __("Save failed"),
+								message: String(e.message || e),
+								indicator: "red",
+							});
+						}
+					},
+				});
+				d.show();
 			},
 			async seedDemo() {
 				frappe.confirm(__("Seed demo org users? Password Tracker@123."), async () => {
@@ -152,7 +256,10 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 					async () => {
 						try {
 							await this.call("tracker.api.v1.hierarchy.seed_demo_work");
-							frappe.show_alert({ message: __("Demo work seeded"), indicator: "green" });
+							frappe.show_alert({
+								message: __("Demo work seeded"),
+								indicator: "green",
+							});
 							await this.refresh();
 						} catch (e) {
 							frappe.msgprint(String(e.message || e));
@@ -163,16 +270,22 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 		},
 		template: `
 		<div class="tracker-org">
+			<div class="tracker-brand">
+				<span class="tracker-brand-title">{{ __("Task Management Org Setup") }}</span>
+			</div>
+			<p class="text-muted">
+				{{ __("Set Tracker org role, reports_to, and Frappe role. Assign only flows down this tree.") }}
+			</p>
 			<p class="text-muted">
 				{{ __("Company") }}: <strong>{{ company || "—" }}</strong>
 			</p>
 
-			<div class="mb-3" v-if="caps.can_create_top">
-				<button class="btn btn-default btn-sm" @click="seedDemo">{{ __("Seed demo org") }}</button>
-				<button class="btn btn-default btn-sm" @click="seedWork">{{ __("Seed demo work") }}</button>
+			<div class="mb-3" v-if="isSystemManager" style="display:flex;gap:8px;flex-wrap:wrap">
+				<button class="btn btn-secondary btn-sm" @click="seedDemo">{{ __("Seed demo Top / Sub / Worker") }}</button>
+				<button class="btn btn-warning btn-sm" @click="seedWork">{{ __("Seed demo work data") }}</button>
 			</div>
 
-			<div class="card p-3 mb-3" v-if="caps.can_assign_org">
+			<div class="tracker-org-card mb-3" v-if="caps.can_assign_org">
 				<h5>{{ __("Assign person") }}</h5>
 				<div class="tracker-form-grid">
 					<input class="form-control" v-model="assignForm.email" :placeholder="__('Email')" />
@@ -186,7 +299,7 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 				</div>
 			</div>
 
-			<div class="card p-3 mb-3" v-if="caps.can_create_top">
+			<div class="tracker-org-card mb-3" v-if="caps.can_create_top || isSystemManager">
 				<h5>{{ __("Create Top") }} <span class="text-muted small">({{ __("System Manager") }})</span></h5>
 				<div class="tracker-form-grid">
 					<input class="form-control" v-model="topForm.email" :placeholder="__('Email')" />
@@ -198,14 +311,19 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 			</div>
 
 			<h5>{{ __("Employees") }}</h5>
-			<div v-if="!employees.length" class="text-muted">{{ __("No employees") }}</div>
-			<div v-for="emp in employees" :key="emp.name" class="tracker-org-row">
-				<strong>{{ emp.employee_name || emp.name }}</strong>
-				<span class="text-muted">{{ emp.user_id || "" }}</span>
-				<span class="badge">{{ emp.tracker_org_role || "—" }}</span>
-				<span class="text-muted small" v-if="emp.branch">{{ emp.branch }}</span>
-				<span class="text-muted small">{{ (emp.roles || []).join(", ") }}</span>
-				<span class="text-muted small" v-if="emp.reports_to">→ {{ emp.reports_to }}</span>
+			<div v-if="!treeRows.length" class="text-muted">{{ __("No active employees.") }}</div>
+			<div
+				v-for="row in treeRows"
+				:key="row.emp.name"
+				class="tracker-org-row"
+				:style="{paddingLeft: (row.depth * 18) + 'px'}"
+			>
+				<strong>{{ row.emp.employee_name || row.emp.name }}</strong>
+				<span class="text-muted">{{ row.emp.user_id || __("no user") }}</span>
+				<span class="badge">{{ row.emp.tracker_org_role || "—" }}</span>
+				<span class="text-muted small" v-if="row.emp.branch">{{ row.emp.branch }}</span>
+				<span class="text-muted small">{{ (row.emp.roles || []).join(", ") || "—" }}</span>
+				<button class="btn btn-xs btn-default" @click="editEmployee(row.emp.name)">{{ __("Edit") }}</button>
 			</div>
 		</div>
 		`,
@@ -214,4 +332,23 @@ frappe.pages["tracker-org"].on_page_load = function (wrapper) {
 	tracker.vue.mount(el, OrgApp).then((app) => {
 		wrapper.tracker_org_vue = app;
 	});
+
+	page.set_primary_action(__("Refresh"), () => {
+		const proxy =
+			wrapper.tracker_org_vue &&
+			wrapper.tracker_org_vue._instance &&
+			wrapper.tracker_org_vue._instance.proxy;
+		if (proxy && proxy.refresh) proxy.refresh();
+	});
+};
+
+frappe.pages["tracker-org"].on_page_show = function (wrapper) {
+	const now = Date.now();
+	if (wrapper._tracker_org_show && now - wrapper._tracker_org_show < 1000) return;
+	wrapper._tracker_org_show = now;
+	const proxy =
+		wrapper.tracker_org_vue &&
+		wrapper.tracker_org_vue._instance &&
+		wrapper.tracker_org_vue._instance.proxy;
+	if (proxy && proxy.refresh) proxy.refresh();
 };
