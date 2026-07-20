@@ -610,6 +610,19 @@
 	}
 }
 
+.tracker-hours-card-wide {
+	grid-column: 1 / -1;
+}
+
+.tracker-hours .tracker-report-tabs {
+	margin: 0 0 12px;
+	gap: 4px;
+}
+
+.tracker-hours .tracker-report-panel {
+	margin-top: 0;
+}
+
 .tracker-hours-card {
 	border: 1px solid var(--border-color);
 	border-radius: var(--border-radius-md, 8px);

@@ -40,6 +40,51 @@ def _parse_dates(from_date, to_date):
 		return None, None, fail("bad_request", "invalid date")
 
 
+def _timesheet_scope(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	company: str | None = None,
+	page: int = 1,
+	page_size: int = 50,
+):
+	"""Shared date/company/employee scope for Timesheet Detail reports."""
+	fd, td, err = _parse_dates(from_date, to_date)
+	if err:
+		return None
+	page = int(page or 1)
+	page_size = min(int(page_size or 50), 500)
+	company = company or get_company_for_user()
+	employees = _allowed_employees()
+	conds = ["ts.docstatus < 2", "td.hours > 0", "DATE(td.from_time) BETWEEN %(fd)s AND %(td)s"]
+	vals: dict = {"fd": fd, "td": td}
+	if company:
+		conds.append("ts.company = %(company)s")
+		vals["company"] = company
+	if employees is not None:
+		if not employees:
+			return {
+				"empty": True,
+				"page": page,
+				"page_size": page_size,
+			}
+		conds.append("ts.employee IN %(employees)s")
+		vals["employees"] = employees
+	return {
+		"empty": False,
+		"page": page,
+		"page_size": page_size,
+		"where": " AND ".join(conds),
+		"vals": vals,
+		"err": None,
+	}
+
+
+def _paginate(rows: list, page: int, page_size: int):
+	total = len(rows)
+	start = (page - 1) * page_size
+	return rows[start : start + page_size], total
+
+
 @frappe.whitelist()
 def overview(status: str | None = None):
 	"""Lead dashboard: task counts, filtered items, running sessions, draft timesheets."""
@@ -178,49 +223,42 @@ def hours_by_project(
 	page: int = 1,
 	page_size: int = 50,
 ):
-	fd, td, err = _parse_dates(from_date, to_date)
-	if err:
+	scope = _timesheet_scope(from_date, to_date, company, page, page_size)
+	if scope is None:
+		fd, td, err = _parse_dates(from_date, to_date)
 		return err
-	page = int(page or 1)
-	page_size = min(int(page_size or 50), 200)
-	company = company or get_company_for_user()
-	employees = _allowed_employees()
-	if employees is not None and not employees:
-		return paginated([], page=page, page_size=page_size, total=0)
+	if scope.get("empty"):
+		return paginated([], page=scope["page"], page_size=scope["page_size"], total=0)
 
-	conds = ["ts.docstatus < 2", "td.hours > 0", "DATE(td.from_time) BETWEEN %(fd)s AND %(td)s"]
-	vals: dict = {"fd": fd, "td": td}
-	if company:
-		conds.append("ts.company = %(company)s")
-		vals["company"] = company
-	if employees is not None:
-		conds.append("ts.employee IN %(employees)s")
-		vals["employees"] = employees
-
-	where = " AND ".join(conds)
 	rows = frappe.db.sql(
 		f"""
 		SELECT
 			COALESCE(td.project, ts.parent_project, '') AS project,
 			SUM(td.hours) AS hours,
-			COUNT(*) AS entries
+			COUNT(*) AS entries,
+			COUNT(DISTINCT ts.employee) AS people,
+			COUNT(DISTINCT ts.name) AS timesheets
 		FROM `tabTimesheet Detail` td
 		INNER JOIN `tabTimesheet` ts ON ts.name = td.parent
-		WHERE {where}
+		WHERE {scope["where"]}
 		GROUP BY COALESCE(td.project, ts.parent_project, '')
 		ORDER BY hours DESC
 		""",
-		vals,
+		scope["vals"],
 		as_dict=True,
 	)
-	total = len(rows)
-	start = (page - 1) * page_size
-	slice_rows = rows[start : start + page_size]
+	slice_rows, total = _paginate(rows, scope["page"], scope["page_size"])
 	for r in slice_rows:
 		r["hours"] = float(r.get("hours") or 0)
 		r["entries"] = int(r.get("entries") or 0)
+		r["people"] = int(r.get("people") or 0)
+		r["timesheets"] = int(r.get("timesheets") or 0)
 		r["project"] = r.get("project") or None
-	return paginated(slice_rows, page=page, page_size=page_size, total=total)
+		if r["project"]:
+			r["project_name"] = frappe.db.get_value("Project", r["project"], "project_name") or r["project"]
+		else:
+			r["project_name"] = None
+	return paginated(slice_rows, page=scope["page"], page_size=scope["page_size"], total=total)
 
 
 @frappe.whitelist()
@@ -231,26 +269,13 @@ def hours_by_user(
 	page: int = 1,
 	page_size: int = 50,
 ):
-	fd, td, err = _parse_dates(from_date, to_date)
-	if err:
+	scope = _timesheet_scope(from_date, to_date, company, page, page_size)
+	if scope is None:
+		fd, td, err = _parse_dates(from_date, to_date)
 		return err
-	page = int(page or 1)
-	page_size = min(int(page_size or 50), 200)
-	company = company or get_company_for_user()
-	employees = _allowed_employees()
-	if employees is not None and not employees:
-		return paginated([], page=page, page_size=page_size, total=0)
+	if scope.get("empty"):
+		return paginated([], page=scope["page"], page_size=scope["page_size"], total=0)
 
-	conds = ["ts.docstatus < 2", "td.hours > 0", "DATE(td.from_time) BETWEEN %(fd)s AND %(td)s"]
-	vals: dict = {"fd": fd, "td": td}
-	if company:
-		conds.append("ts.company = %(company)s")
-		vals["company"] = company
-	if employees is not None:
-		conds.append("ts.employee IN %(employees)s")
-		vals["employees"] = employees
-
-	where = " AND ".join(conds)
 	rows = frappe.db.sql(
 		f"""
 		SELECT
@@ -258,24 +283,28 @@ def hours_by_user(
 			emp.user_id AS user,
 			emp.employee_name AS employee_name,
 			SUM(td.hours) AS hours,
-			COUNT(*) AS entries
+			COUNT(*) AS entries,
+			COUNT(DISTINCT COALESCE(td.project, ts.parent_project, '')) AS projects,
+			COUNT(DISTINCT COALESCE(td.task, '')) AS tasks,
+			COUNT(DISTINCT ts.name) AS timesheets
 		FROM `tabTimesheet Detail` td
 		INNER JOIN `tabTimesheet` ts ON ts.name = td.parent
 		LEFT JOIN `tabEmployee` emp ON emp.name = ts.employee
-		WHERE {where}
+		WHERE {scope["where"]}
 		GROUP BY ts.employee, emp.user_id, emp.employee_name
 		ORDER BY hours DESC
 		""",
-		vals,
+		scope["vals"],
 		as_dict=True,
 	)
-	total = len(rows)
-	start = (page - 1) * page_size
-	slice_rows = rows[start : start + page_size]
+	slice_rows, total = _paginate(rows, scope["page"], scope["page_size"])
 	for r in slice_rows:
 		r["hours"] = float(r.get("hours") or 0)
 		r["entries"] = int(r.get("entries") or 0)
-	return paginated(slice_rows, page=page, page_size=page_size, total=total)
+		r["projects"] = int(r.get("projects") or 0)
+		r["tasks"] = int(r.get("tasks") or 0)
+		r["timesheets"] = int(r.get("timesheets") or 0)
+	return paginated(slice_rows, page=scope["page"], page_size=scope["page_size"], total=total)
 
 
 @frappe.whitelist()
@@ -286,49 +315,36 @@ def hours_by_activity_type(
 	page: int = 1,
 	page_size: int = 50,
 ):
-	fd, td, err = _parse_dates(from_date, to_date)
-	if err:
+	scope = _timesheet_scope(from_date, to_date, company, page, page_size)
+	if scope is None:
+		fd, td, err = _parse_dates(from_date, to_date)
 		return err
-	page = int(page or 1)
-	page_size = min(int(page_size or 50), 200)
-	company = company or get_company_for_user()
-	employees = _allowed_employees()
-	if employees is not None and not employees:
-		return paginated([], page=page, page_size=page_size, total=0)
+	if scope.get("empty"):
+		return paginated([], page=scope["page"], page_size=scope["page_size"], total=0)
 
-	conds = ["ts.docstatus < 2", "td.hours > 0", "DATE(td.from_time) BETWEEN %(fd)s AND %(td)s"]
-	vals: dict = {"fd": fd, "td": td}
-	if company:
-		conds.append("ts.company = %(company)s")
-		vals["company"] = company
-	if employees is not None:
-		conds.append("ts.employee IN %(employees)s")
-		vals["employees"] = employees
-
-	where = " AND ".join(conds)
 	rows = frappe.db.sql(
 		f"""
 		SELECT
 			COALESCE(td.activity_type, '') AS activity_type,
 			SUM(td.hours) AS hours,
-			COUNT(*) AS entries
+			COUNT(*) AS entries,
+			COUNT(DISTINCT ts.employee) AS people
 		FROM `tabTimesheet Detail` td
 		INNER JOIN `tabTimesheet` ts ON ts.name = td.parent
-		WHERE {where}
+		WHERE {scope["where"]}
 		GROUP BY COALESCE(td.activity_type, '')
 		ORDER BY hours DESC
 		""",
-		vals,
+		scope["vals"],
 		as_dict=True,
 	)
-	total = len(rows)
-	start = (page - 1) * page_size
-	slice_rows = rows[start : start + page_size]
+	slice_rows, total = _paginate(rows, scope["page"], scope["page_size"])
 	for r in slice_rows:
 		r["hours"] = float(r.get("hours") or 0)
 		r["entries"] = int(r.get("entries") or 0)
+		r["people"] = int(r.get("people") or 0)
 		r["activity_type"] = r.get("activity_type") or None
-	return paginated(slice_rows, page=page, page_size=page_size, total=total)
+	return paginated(slice_rows, page=scope["page"], page_size=scope["page_size"], total=total)
 
 
 @frappe.whitelist()
@@ -339,52 +355,175 @@ def hours_by_task(
 	page: int = 1,
 	page_size: int = 50,
 ):
-	fd, td, err = _parse_dates(from_date, to_date)
-	if err:
+	scope = _timesheet_scope(from_date, to_date, company, page, page_size)
+	if scope is None:
+		fd, td, err = _parse_dates(from_date, to_date)
 		return err
-	page = int(page or 1)
-	page_size = min(int(page_size or 50), 200)
-	company = company or get_company_for_user()
-	employees = _allowed_employees()
-	if employees is not None and not employees:
-		return paginated([], page=page, page_size=page_size, total=0)
+	if scope.get("empty"):
+		return paginated([], page=scope["page"], page_size=scope["page_size"], total=0)
 
-	conds = ["ts.docstatus < 2", "td.hours > 0", "DATE(td.from_time) BETWEEN %(fd)s AND %(td)s"]
-	vals: dict = {"fd": fd, "td": td}
-	if company:
-		conds.append("ts.company = %(company)s")
-		vals["company"] = company
-	if employees is not None:
-		conds.append("ts.employee IN %(employees)s")
-		vals["employees"] = employees
-
-	where = " AND ".join(conds)
 	rows = frappe.db.sql(
 		f"""
 		SELECT
 			COALESCE(td.task, '') AS task,
 			COALESCE(td.project, ts.parent_project, '') AS project,
 			COALESCE(td.activity_type, '') AS activity_type,
+			ts.employee AS employee,
+			emp.user_id AS user,
+			emp.employee_name AS employee_name,
 			SUM(td.hours) AS hours,
-			COUNT(*) AS entries
+			COUNT(*) AS entries,
+			COUNT(DISTINCT ts.name) AS timesheets
 		FROM `tabTimesheet Detail` td
 		INNER JOIN `tabTimesheet` ts ON ts.name = td.parent
-		WHERE {where}
-		GROUP BY COALESCE(td.task, ''), COALESCE(td.project, ts.parent_project, ''), COALESCE(td.activity_type, '')
+		LEFT JOIN `tabEmployee` emp ON emp.name = ts.employee
+		WHERE {scope["where"]}
+		GROUP BY
+			COALESCE(td.task, ''),
+			COALESCE(td.project, ts.parent_project, ''),
+			COALESCE(td.activity_type, ''),
+			ts.employee,
+			emp.user_id,
+			emp.employee_name
 		ORDER BY hours DESC
 		""",
-		vals,
+		scope["vals"],
 		as_dict=True,
 	)
-	total = len(rows)
-	start = (page - 1) * page_size
-	slice_rows = rows[start : start + page_size]
+	slice_rows, total = _paginate(rows, scope["page"], scope["page_size"])
 	for r in slice_rows:
 		r["hours"] = float(r.get("hours") or 0)
 		r["entries"] = int(r.get("entries") or 0)
+		r["timesheets"] = int(r.get("timesheets") or 0)
 		r["task"] = r.get("task") or None
 		r["project"] = r.get("project") or None
 		r["activity_type"] = r.get("activity_type") or None
 		if r["task"]:
 			r["task_subject"] = frappe.db.get_value("Task", r["task"], "subject") or r["task"]
-	return paginated(slice_rows, page=page, page_size=page_size, total=total)
+		else:
+			r["task_subject"] = None
+	return paginated(slice_rows, page=scope["page"], page_size=scope["page_size"], total=total)
+
+
+@frappe.whitelist()
+def hours_by_timesheet(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	company: str | None = None,
+	page: int = 1,
+	page_size: int = 50,
+):
+	"""One row per Timesheet (draft + submitted) in range."""
+	scope = _timesheet_scope(from_date, to_date, company, page, page_size)
+	if scope is None:
+		fd, td, err = _parse_dates(from_date, to_date)
+		return err
+	if scope.get("empty"):
+		return paginated([], page=scope["page"], page_size=scope["page_size"], total=0)
+
+	rows = frappe.db.sql(
+		f"""
+		SELECT
+			ts.name AS timesheet,
+			ts.employee AS employee,
+			emp.user_id AS user,
+			emp.employee_name AS employee_name,
+			ts.start_date AS start_date,
+			ts.end_date AS end_date,
+			ts.docstatus AS docstatus,
+			ts.status AS status,
+			COALESCE(ts.parent_project, '') AS project,
+			SUM(td.hours) AS hours,
+			COUNT(*) AS entries,
+			COUNT(DISTINCT COALESCE(td.task, '')) AS tasks,
+			COUNT(DISTINCT COALESCE(td.activity_type, '')) AS activity_types
+		FROM `tabTimesheet Detail` td
+		INNER JOIN `tabTimesheet` ts ON ts.name = td.parent
+		LEFT JOIN `tabEmployee` emp ON emp.name = ts.employee
+		WHERE {scope["where"]}
+		GROUP BY
+			ts.name, ts.employee, emp.user_id, emp.employee_name,
+			ts.start_date, ts.end_date, ts.docstatus, ts.status, ts.parent_project
+		ORDER BY ts.start_date DESC, hours DESC
+		""",
+		scope["vals"],
+		as_dict=True,
+	)
+	slice_rows, total = _paginate(rows, scope["page"], scope["page_size"])
+	for r in slice_rows:
+		r["hours"] = float(r.get("hours") or 0)
+		r["entries"] = int(r.get("entries") or 0)
+		r["tasks"] = int(r.get("tasks") or 0)
+		r["activity_types"] = int(r.get("activity_types") or 0)
+		r["project"] = r.get("project") or None
+		ds = int(r.get("docstatus") or 0)
+		r["docstatus_label"] = {0: "Draft", 1: "Submitted", 2: "Cancelled"}.get(ds, str(ds))
+		if r.get("start_date"):
+			r["start_date"] = str(r["start_date"])
+		if r.get("end_date"):
+			r["end_date"] = str(r["end_date"])
+	return paginated(slice_rows, page=scope["page"], page_size=scope["page_size"], total=total)
+
+
+@frappe.whitelist()
+def hours_detail(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	company: str | None = None,
+	page: int = 1,
+	page_size: int = 100,
+):
+	"""Line-level ledger: user + timesheet + task + project + activity type."""
+	scope = _timesheet_scope(from_date, to_date, company, page, page_size)
+	if scope is None:
+		fd, td, err = _parse_dates(from_date, to_date)
+		return err
+	if scope.get("empty"):
+		return paginated([], page=scope["page"], page_size=scope["page_size"], total=0)
+
+	rows = frappe.db.sql(
+		f"""
+		SELECT
+			ts.name AS timesheet,
+			ts.docstatus AS docstatus,
+			ts.employee AS employee,
+			emp.user_id AS user,
+			emp.employee_name AS employee_name,
+			COALESCE(td.project, ts.parent_project, '') AS project,
+			COALESCE(td.task, '') AS task,
+			COALESCE(td.activity_type, '') AS activity_type,
+			td.from_time AS from_time,
+			td.to_time AS to_time,
+			td.hours AS hours,
+			td.description AS description
+		FROM `tabTimesheet Detail` td
+		INNER JOIN `tabTimesheet` ts ON ts.name = td.parent
+		LEFT JOIN `tabEmployee` emp ON emp.name = ts.employee
+		WHERE {scope["where"]}
+		ORDER BY td.from_time DESC
+		""",
+		scope["vals"],
+		as_dict=True,
+	)
+	slice_rows, total = _paginate(rows, scope["page"], scope["page_size"])
+	task_names = {r.get("task") for r in slice_rows if r.get("task")}
+	subjects = {}
+	if task_names:
+		for t in frappe.get_all(
+			"Task",
+			filters={"name": ("in", list(task_names))},
+			fields=["name", "subject"],
+		):
+			subjects[t.name] = t.subject
+	for r in slice_rows:
+		r["hours"] = float(r.get("hours") or 0)
+		r["project"] = r.get("project") or None
+		r["task"] = r.get("task") or None
+		r["activity_type"] = r.get("activity_type") or None
+		r["task_subject"] = subjects.get(r["task"]) if r["task"] else None
+		ds = int(r.get("docstatus") or 0)
+		r["docstatus_label"] = {0: "Draft", 1: "Submitted", 2: "Cancelled"}.get(ds, str(ds))
+		for key in ("from_time", "to_time"):
+			if r.get(key):
+				r[key] = str(r[key])
+	return paginated(slice_rows, page=scope["page"], page_size=scope["page_size"], total=total)
