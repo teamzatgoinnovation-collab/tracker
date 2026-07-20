@@ -6,6 +6,6 @@ def get_data():
 		{
 			"module_name": "Tracker",
 			"type": "module",
-			"label": _("Tracker"),
+			"label": _("Task Management"),
 		}
 	]

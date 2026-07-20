@@ -6,17 +6,23 @@ import frappe
 from frappe import _
 
 from tracker.api.response import fail, ok
-from tracker.permissions.capabilities import assert_can_manage_work, capability_payload
+from tracker.permissions.capabilities import (
+	assert_can_manage_work,
+	capability_payload,
+	is_lead_or_above,
+	is_system,
+)
 from tracker.permissions.hierarchy import (
 	can_assign_to,
 	get_employee_for_user,
 	get_org_role,
+	get_subordinate_employees,
 	get_subordinate_users,
 )
-from tracker.permissions.roles import TRACKER_ROLES
+from tracker.permissions.roles import TRACKER_ROLES, TRACKER_SUB, TRACKER_TOP, TRACKER_WORKER
 from tracker.services.assign import assign_project_member, assign_task, parse_users
-from tracker.setup.demo_org import seed_demo_org
 from tracker.setup.demo_data import seed_demo_data
+from tracker.setup.demo_org import _default_gender, seed_demo_org
 
 
 @frappe.whitelist()
@@ -56,6 +62,8 @@ def org_tree():
 	fields = ["name", "employee_name", "user_id", "reports_to", "company"]
 	if frappe.get_meta("Employee").has_field("tracker_org_role"):
 		fields.append("tracker_org_role")
+	if frappe.get_meta("Employee").has_field("branch"):
+		fields.append("branch")
 	rows = frappe.get_all("Employee", filters=filters, fields=fields, order_by="employee_name asc")
 	# attach roles for users
 	for row in rows:
@@ -64,6 +72,81 @@ def org_tree():
 			user_roles = set(frappe.get_roles(row.user_id))
 			row["roles"] = [r for r in TRACKER_ROLES if r in user_roles]
 	return ok({"company": company, "employees": rows})
+
+
+@frappe.whitelist()
+def create_top_member(
+	email: str,
+	full_name: str,
+	company: str,
+	branch: str | None = None,
+):
+	"""System Manager only: create User + Employee with Tracker Top."""
+	if not is_system():
+		frappe.throw(_("Only System Manager can create Top members."), frappe.PermissionError)
+	if not email or not full_name or not company:
+		return fail("bad_request", "email, full_name, and company required")
+
+	result = _provision_member(
+		email=email.strip(),
+		full_name=full_name.strip(),
+		company=company,
+		frappe_role=TRACKER_TOP,
+		org_role="Top",
+		branch=branch,
+		reports_to=None,
+	)
+	return ok(result)
+
+
+@frappe.whitelist()
+def assign_org_member(
+	email: str,
+	full_name: str,
+	company: str,
+	role: str,
+	branch: str | None = None,
+	reports_to: str | None = None,
+):
+	"""Top/Sub: create Sub or Worker under the org tree."""
+	if not is_lead_or_above():
+		frappe.throw(_("Only Team Leads and Managers can assign org members."), frappe.PermissionError)
+	if not email or not full_name or not company or not role:
+		return fail("bad_request", "email, full_name, company, and role required")
+
+	role = (role or "").strip()
+	if role not in ("Sub", "Worker"):
+		return fail("bad_request", 'role must be "Sub" or "Worker"')
+
+	# Sub cannot assign Top (already blocked by role allow-list)
+	frappe_role = TRACKER_SUB if role == "Sub" else TRACKER_WORKER
+	creator_emp = get_employee_for_user()
+	if reports_to is None:
+		reports_to = creator_emp
+
+	# Sub may only place people under themselves (or within their tree)
+	roles = set(frappe.get_roles())
+	if TRACKER_SUB in roles and TRACKER_TOP not in roles and not is_system():
+		if not creator_emp:
+			frappe.throw(_("Your Employee record is required to assign org members."), frappe.PermissionError)
+		if reports_to and reports_to != creator_emp:
+			subs = get_subordinate_employees(creator_emp)
+			if reports_to not in subs and reports_to != creator_emp:
+				frappe.throw(
+					_("You can only assign members under your subordinate tree."),
+					frappe.PermissionError,
+				)
+
+	result = _provision_member(
+		email=email.strip(),
+		full_name=full_name.strip(),
+		company=company,
+		frappe_role=frappe_role,
+		org_role=role,
+		branch=branch,
+		reports_to=reports_to,
+	)
+	return ok(result)
 
 
 @frappe.whitelist()
@@ -76,12 +159,26 @@ def update_employee_org(
 	"""Set org role / reports_to / Frappe Tracker role on Employee+User."""
 	if not employee:
 		return fail("bad_request", "employee required")
-	if not (
-		frappe.session.user == "Administrator"
-		or "System Manager" in frappe.get_roles()
-		or "Tracker Top" in frappe.get_roles()
-	):
-		frappe.throw(_("Not permitted to update org setup."), frappe.PermissionError)
+
+	user = frappe.session.user
+	roles = set(frappe.get_roles(user))
+	full_access = is_system(user) or TRACKER_TOP in roles
+
+	if not full_access:
+		if TRACKER_SUB not in roles:
+			frappe.throw(_("Not permitted to update org setup."), frappe.PermissionError)
+		my_emp = get_employee_for_user(user)
+		if not my_emp:
+			frappe.throw(_("Not permitted to update org setup."), frappe.PermissionError)
+		subs = get_subordinate_employees(my_emp)
+		if employee not in subs:
+			frappe.throw(
+				_("You can only update employees in your subordinate tree."),
+				frappe.PermissionError,
+			)
+		# Sub cannot promote to Top
+		if tracker_org_role == "Top" or tracker_role == TRACKER_TOP:
+			frappe.throw(_("Team Leads cannot promote to Top."), frappe.PermissionError)
 
 	doc = frappe.get_doc("Employee", employee)
 	if tracker_org_role is not None and frappe.get_meta("Employee").has_field("tracker_org_role"):
@@ -91,12 +188,12 @@ def update_employee_org(
 	doc.save(ignore_permissions=True)
 
 	if tracker_role is not None and doc.user_id:
-		user = frappe.get_doc("User", doc.user_id)
+		user_doc = frappe.get_doc("User", doc.user_id)
 		# remove other Tracker roles then add selected (empty clears all)
-		user.roles = [r for r in user.roles if r.role not in TRACKER_ROLES]
+		user_doc.roles = [r for r in user_doc.roles if r.role not in TRACKER_ROLES]
 		if tracker_role in TRACKER_ROLES:
-			user.append_roles(tracker_role)
-		user.save(ignore_permissions=True)
+			user_doc.append_roles(tracker_role)
+		user_doc.save(ignore_permissions=True)
 
 	return ok(frappe.get_doc("Employee", employee).as_dict())
 
@@ -150,3 +247,113 @@ def assign(doctype: str, name: str, users: str | None = None, user: str | None =
 	else:
 		return fail("unsupported", f"Cannot assign {doctype}")
 	return ok({"doctype": doctype, "name": name, "users": targets})
+
+
+def _provision_member(
+	*,
+	email: str,
+	full_name: str,
+	company: str,
+	frappe_role: str,
+	org_role: str,
+	branch: str | None,
+	reports_to: str | None,
+) -> dict:
+	"""Create/update User + Employee; return temporary_password when user is new."""
+	temporary_password = None
+	created_user = False
+
+	if not frappe.db.exists("User", email):
+		parts = full_name.split()
+		first = parts[0]
+		last = " ".join(parts[1:]) or "User"
+		temporary_password = frappe.generate_hash(length=12)
+		user = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": first,
+				"last_name": last,
+				"send_welcome_email": 0,
+				"user_type": "System User",
+			}
+		)
+		user.insert(ignore_permissions=True)
+		user.new_password = temporary_password
+		user.save(ignore_permissions=True)
+		created_user = True
+	else:
+		user = frappe.get_doc("User", email)
+
+	# one Tracker org role at a time
+	user.roles = [r for r in user.roles if r.role not in TRACKER_ROLES]
+	user.append_roles(frappe_role)
+	if "Employee" not in {r.role for r in user.roles} and frappe.db.exists("Role", "Employee"):
+		user.append_roles("Employee")
+	user.save(ignore_permissions=True)
+
+	emp_name = _ensure_employee_record(
+		user=email,
+		full_name=full_name,
+		company=company,
+		org_role=org_role,
+		reports_to=reports_to,
+		branch=branch,
+	)
+	frappe.db.commit()
+	return {
+		"user": email,
+		"employee": emp_name,
+		"org_role": org_role,
+		"frappe_role": frappe_role,
+		"temporary_password": temporary_password,
+		"created_user": created_user,
+	}
+
+
+def _ensure_employee_record(
+	*,
+	user: str,
+	full_name: str,
+	company: str,
+	org_role: str,
+	reports_to: str | None,
+	branch: str | None,
+) -> str:
+	existing = frappe.db.get_value("Employee", {"user_id": user}, "name")
+	gender = _default_gender()
+	meta = frappe.get_meta("Employee")
+	if existing:
+		doc = frappe.get_doc("Employee", existing)
+	else:
+		doc = frappe.get_doc(
+			{
+				"doctype": "Employee",
+				"employee_name": full_name,
+				"first_name": full_name.split()[0],
+				"company": company,
+				"status": "Active",
+				"user_id": user,
+				"date_of_joining": frappe.utils.today(),
+				"date_of_birth": "1990-01-15",
+				"gender": gender,
+			}
+		)
+
+	doc.company = company
+	if meta.has_field("tracker_org_role"):
+		doc.tracker_org_role = org_role
+	if reports_to is not None:
+		doc.reports_to = reports_to or None
+	if branch and meta.has_field("branch"):
+		doc.branch = branch
+	if not doc.get("date_of_birth") and meta.has_field("date_of_birth"):
+		doc.date_of_birth = "1990-01-15"
+	if not doc.get("gender") and meta.has_field("gender"):
+		doc.gender = gender
+
+	if existing:
+		doc.save(ignore_permissions=True)
+	else:
+		doc.insert(ignore_permissions=True)
+	return doc.name

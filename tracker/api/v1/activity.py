@@ -1,4 +1,4 @@
-"""Activity start / pause / next / active."""
+"""Activity start / pause / stop / active."""
 
 from __future__ import annotations
 
@@ -27,17 +27,6 @@ def start(task: str | None = None, project: str | None = None, activity_type: st
 @frappe.whitelist()
 def pause(name: str | None = None):
 	return ok(activity_service.pause_session(name))
-
-
-@frappe.whitelist()
-def next(task: str, project: str | None = None, activity_type: str | None = None):
-	if not task:
-		return fail("bad_request", "task required")
-	return ok(
-		activity_service.next_session(
-			task=task, project=project, activity_type=activity_type
-		)
-	)
 
 
 @frappe.whitelist()

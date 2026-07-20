@@ -1,4 +1,4 @@
-"""Live activity session: start / pause / next with single-running invariant."""
+"""Live activity session: start / pause / stop with single-running invariant."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 import frappe
 from frappe import _
-from frappe.utils import get_datetime, now_datetime, time_diff_in_seconds
+from frappe.utils import get_datetime, getdate, now_datetime, time_diff_in_seconds
 
 from tracker.permissions.hierarchy import get_company_for_user, get_employee_for_user
 from tracker.tracker.doctype.tracker_settings.tracker_settings import get_default_activity_type
@@ -84,11 +84,18 @@ def start_session(
 	user: str | None = None,
 ) -> dict:
 	user = user or frappe.session.user
+	emp = get_employee_for_user(user)
+	if not emp:
+		frappe.throw(
+			_("An Employee record linked to your user is required to start activity."),
+			frappe.ValidationError,
+		)
+
 	existing = get_active_session(user)
 	if existing and existing.get("status") == "Running":
 		if task and existing.get("task") == task:
 			return existing
-		frappe.throw(_("You already have a running session. Pause or Next first."))
+		frappe.throw(_("You already have a running session. Pause or Stop first."))
 
 	if existing and existing.get("status") == "Paused" and task and existing.get("task") == task:
 		return resume_session(existing["name"])
@@ -98,7 +105,6 @@ def start_session(
 		stop_session(existing["name"], flush=True)
 
 	now = now_datetime()
-	emp = get_employee_for_user(user)
 	company = None
 	if task:
 		project = project or frappe.db.get_value("Task", task, "project")
@@ -182,21 +188,6 @@ def stop_session(name: str | None = None, *, flush: bool = True, user: str | Non
 	return _session_payload(doc)
 
 
-def next_session(
-	*,
-	task: str,
-	project: str | None = None,
-	activity_type: str | None = None,
-	user: str | None = None,
-) -> dict:
-	"""Stop current (flush) and start the next task — previous never stays Running."""
-	user = user or frappe.session.user
-	active = get_active_session(user)
-	if active:
-		stop_session(active["name"], flush=True, user=user)
-	return start_session(task=task, project=project, activity_type=activity_type, user=user)
-
-
 def _get_owned_session(name: str | None, user: str):
 	if not name:
 		active = get_active_session(user)
@@ -233,43 +224,71 @@ def _elapsed(started_on, ended_on) -> float:
 
 
 def _flush_to_timesheet(doc) -> None:
+	"""Append or create a draft Timesheet for this session (idempotent)."""
+	if getattr(doc, "timesheet", None):
+		return
+
 	hours = float(doc.duration_seconds or 0) / 3600.0
 	if hours < 0.01:
-		return
+		frappe.throw(
+			_("Session duration is too short to create a Timesheet entry."),
+			frappe.ValidationError,
+		)
+
 	employee = doc.employee or get_employee_for_user(doc.user)
 	if not employee:
-		frappe.log_error("Tracker: no Employee for timesheet flush", doc.name)
-		return
+		frappe.throw(
+			_("An Employee record is required to flush this session to a Timesheet."),
+			frappe.ValidationError,
+		)
+
 	company = doc.company or get_company_for_user(doc.user)
 	activity_type = doc.activity_type or get_default_activity_type()
 	_ensure_activity_type(activity_type)
 
 	to_time = get_datetime(doc.ended_on) if doc.ended_on else now_datetime()
-	# Window matches accumulated duration (pause/resume safe)
 	from_time = to_time - timedelta(seconds=float(doc.duration_seconds or 0))
+	start_date = getdate(to_time)
 
-	ts = frappe.get_doc(
-		{
-			"doctype": "Timesheet",
-			"employee": employee,
-			"company": company,
-			"parent_project": doc.project,
-			"time_logs": [
-				{
-					"activity_type": activity_type,
-					"from_time": from_time,
-					"to_time": to_time,
-					"hours": hours,
-					"project": doc.project,
-					"task": doc.task,
-					"completed": 1,
-					"description": f"Tracker session {doc.name}",
-				}
-			],
-		}
-	)
-	ts.insert(ignore_permissions=True)
+	time_log = {
+		"activity_type": activity_type,
+		"from_time": from_time,
+		"to_time": to_time,
+		"hours": hours,
+		"project": doc.project,
+		"task": doc.task,
+		"completed": 1,
+		"description": f"Task Management session {doc.name}",
+	}
+
+	filters: dict = {
+		"employee": employee,
+		"start_date": start_date,
+		"docstatus": 0,
+	}
+	if company:
+		filters["company"] = company
+
+	existing = frappe.db.get_value("Timesheet", filters, "name")
+	if existing:
+		ts = frappe.get_doc("Timesheet", existing)
+		ts.append("time_logs", time_log)
+		ts.save(ignore_permissions=True)
+	else:
+		ts = frappe.get_doc(
+			{
+				"doctype": "Timesheet",
+				"employee": employee,
+				"company": company,
+				"start_date": start_date,
+				"parent_project": doc.project,
+				"time_logs": [time_log],
+			}
+		)
+		ts.insert(ignore_permissions=True)
+
 	doc.db_set("timesheet", ts.name, update_modified=False)
+	doc.timesheet = ts.name
 
 
 def _ensure_activity_type(name: str) -> None:

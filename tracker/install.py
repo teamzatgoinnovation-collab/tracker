@@ -105,11 +105,11 @@ def _ensure_employee_custom_fields() -> None:
 			"Employee": [
 				{
 					"fieldname": "tracker_org_role",
-					"label": "Tracker Org Role",
+					"label": "Org Role",
 					"fieldtype": "Select",
 					"options": "\nTop\nSub\nWorker",
 					"insert_after": "reports_to",
-					"description": "Top → Sub → Worker hierarchy for Tracker assignment",
+					"description": "Top → Sub → Worker hierarchy for Task Management assignment",
 				},
 			]
 		},
@@ -155,6 +155,9 @@ def _ensure_desk_entry() -> None:
 			if sb.module != "Tracker":
 				sb.module = "Tracker"
 				changed = True
+			if getattr(sb, "title", None) != "Task Management":
+				sb.title = "Task Management"
+				changed = True
 			if _sync_sidebar_items(sb):
 				changed = True
 			if changed:
@@ -164,7 +167,7 @@ def _ensure_desk_entry() -> None:
 				{
 					"doctype": "Workspace Sidebar",
 					"name": "Tracker",
-					"title": "Tracker",
+					"title": "Task Management",
 					"header_icon": "project",
 					"module": "Tracker",
 					"app": "tracker",
@@ -180,7 +183,7 @@ def _ensure_desk_entry() -> None:
 			frappe.get_doc(
 				{
 					"doctype": "Desktop Icon",
-					"label": "Tracker",
+					"label": "Task Management",
 					"app": "tracker",
 					"icon_type": "Link",
 					"link_type": "Workspace Sidebar",
@@ -194,6 +197,9 @@ def _ensure_desk_entry() -> None:
 		for name in icons:
 			doc = frappe.get_doc("Desktop Icon", name)
 			changed = False
+			if doc.label != "Task Management":
+				doc.label = "Task Management"
+				changed = True
 			if doc.link_type != "Workspace Sidebar":
 				doc.link_type = "Workspace Sidebar"
 				changed = True
@@ -205,5 +211,18 @@ def _ensure_desk_entry() -> None:
 				changed = True
 			if changed:
 				doc.save(ignore_permissions=True)
+
+	# Workspace title/label for Desk
+	if frappe.db.exists("Workspace", "Tracker"):
+		ws = frappe.get_doc("Workspace", "Tracker")
+		ws_changed = False
+		if ws.title != "Task Management":
+			ws.title = "Task Management"
+			ws_changed = True
+		if getattr(ws, "label", None) != "Task Management":
+			ws.label = "Task Management"
+			ws_changed = True
+		if ws_changed:
+			ws.save(ignore_permissions=True)
 
 	frappe.db.commit()

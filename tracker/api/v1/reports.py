@@ -6,11 +6,14 @@ import frappe
 from frappe.utils import getdate
 
 from tracker.api.response import fail, ok, paginated
+from tracker.permissions.capabilities import is_lead_or_above, is_top, is_worker_only
 from tracker.permissions.hierarchy import (
 	get_company_for_user,
 	get_employee_for_user,
 	get_subordinate_employees,
+	get_subordinate_users,
 )
+from tracker.services.review import enrich_task_row
 
 
 def _allowed_employees(user: str | None = None) -> list[str] | None:
@@ -35,6 +38,105 @@ def _parse_dates(from_date, to_date):
 		return fd, td, None
 	except Exception:
 		return None, None, fail("bad_request", "invalid date")
+
+
+@frappe.whitelist()
+def overview(status: str | None = None):
+	"""Lead dashboard: task counts, filtered items, running sessions, draft timesheets."""
+	user = frappe.session.user
+	status = status or "Pending Review"
+
+	if is_worker_only(user) or not is_lead_or_above(user):
+		return ok(
+			{
+				"counts": {},
+				"status": status,
+				"items": [],
+				"running": 0,
+				"timesheet_drafts": 0,
+			}
+		)
+
+	company = get_company_for_user(user)
+	# Top / System: company-wide; Sub: team assignees
+	company_scope = is_top(user)
+
+	base_filters: dict = {}
+	or_filters = None
+	if company:
+		base_filters["company"] = company
+	if not company_scope:
+		team_users = get_subordinate_users(user) | {user}
+		or_filters = [["_assign", "like", f"%{u}%"] for u in team_users]
+
+	# Counts by ERPNext Task status
+	counts: dict[str, int] = {}
+	status_rows = frappe.get_all(
+		"Task",
+		filters=dict(base_filters),
+		or_filters=or_filters,
+		fields=["status", "count(name) as cnt"],
+		group_by="status",
+	)
+	for row in status_rows:
+		key = row.get("status") or "Open"
+		counts[key] = int(row.get("cnt") or 0)
+
+	item_filters = dict(base_filters)
+	item_filters["status"] = status
+	items = frappe.get_all(
+		"Task",
+		filters=item_filters,
+		or_filters=or_filters,
+		fields=[
+			"name",
+			"subject",
+			"status",
+			"priority",
+			"project",
+			"company",
+			"exp_end_date",
+			"modified",
+			"_assign",
+		],
+		order_by="modified desc",
+		limit_page_length=50,
+	)
+	items = [enrich_task_row(r) for r in items]
+
+	# Running activity sessions (company when Top; team users when Sub)
+	if company_scope:
+		running_filters: dict = {"status": "Running"}
+		if company:
+			running_filters["company"] = company
+		running = frappe.db.count("Tracker Activity Session", running_filters)
+	else:
+		team_users = get_subordinate_users(user) | {user}
+		running = frappe.db.count(
+			"Tracker Activity Session",
+			{"status": "Running", "user": ("in", list(team_users))},
+		)
+
+	# Draft timesheets for leads
+	from tracker.api.v1.timesheets import _team_employees
+
+	emps = _team_employees(user)
+	timesheet_drafts = 0
+	if emps:
+		timesheet_drafts = frappe.db.count(
+			"Timesheet",
+			{"docstatus": 0, "employee": ("in", emps)},
+		)
+
+	return ok(
+		{
+			"counts": counts,
+			"status": status,
+			"items": items,
+			"running": int(running or 0),
+			"timesheet_drafts": int(timesheet_drafts or 0),
+		}
+	)
 
 
 @frappe.whitelist()

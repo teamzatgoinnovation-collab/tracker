@@ -1,9 +1,8 @@
-"""Task list/create + lifecycle (Draft → Assigned → In Progress → Review → Completed)."""
+"""Task list/create + lifecycle (writes ERPNext Task.status)."""
 
 from __future__ import annotations
 
 import frappe
-from frappe import _
 
 from tracker.api.response import fail, ok, paginated
 from tracker.permissions.capabilities import assert_can_manage_work
@@ -12,12 +11,12 @@ from tracker.services.assign import assign_task, parse_users
 from tracker.services.audit import log_event
 from tracker.services.review import (
 	STAGE_DRAFT,
-	approve_task,
+	approve_task as review_approve,
 	enrich_task_row,
 	get_task_stage,
-	request_rework,
+	request_rework as review_request_rework,
 	set_in_progress,
-	submit_for_review,
+	submit_for_review as review_submit_for_review,
 	team_review_filters,
 )
 
@@ -54,7 +53,6 @@ def list_tasks(
 		if parent_task:
 			filters["parent_task"] = parent_task
 
-		# stage filter maps to status / assign heuristics (post-filter for draft/assigned)
 		or_filters = None
 		if int(mine or 0) and int(team or 0):
 			users = {frappe.session.user} | get_subordinate_users()
@@ -161,7 +159,6 @@ def create_task(
 		}
 	)
 	doc.insert()
-	# Draft by default — only assign when assign_to provided (no self-assign)
 	users = parse_users(assign_to)
 	if users:
 		assign_task(doc.name, users)
@@ -176,23 +173,25 @@ def update_status(name: str, status: str):
 	if not name or not status:
 		return fail("bad_request", "name and status required")
 	mapping = {
-		"Working": "set_in_progress",
+		"Working": "set_progress",
 		"Pending Review": "submit_for_review",
 		"Completed": "approve",
 	}
 	if status == "Working":
-		# could be progress or rework — only allow assignee path without note
 		return ok(set_in_progress(name))
 	if status == "Pending Review":
-		return ok(submit_for_review(name))
+		return ok(review_submit_for_review(name))
 	if status == "Completed":
-		return ok(approve_task(name))
-	return fail("use_lifecycle", f"Use lifecycle APIs instead of raw status={status}. Allowed via mapping: {mapping}")
+		return ok(review_approve(name))
+	return fail(
+		"use_lifecycle",
+		f"Use lifecycle APIs instead of raw status={status}. Allowed via mapping: {mapping}",
+	)
 
 
 @frappe.whitelist()
 def set_progress(name: str):
-	"""Assigned → In Progress."""
+	"""Open/Assigned → Working."""
 	if not name:
 		return fail("bad_request", "name required")
 	return ok(set_in_progress(name))
@@ -202,4 +201,20 @@ def set_progress(name: str):
 def submit_for_review(name: str, note: str | None = None):
 	if not name:
 		return fail("bad_request", "name required")
-	return ok(submit_for_review.__wrapped__(name, note=note) if False else None)  # noqa — fix below
+	return ok(review_submit_for_review(name, note=note))
+
+
+@frappe.whitelist()
+def approve(name: str, note: str | None = None):
+	if not name:
+		return fail("bad_request", "name required")
+	return ok(review_approve(name, note=note))
+
+
+@frappe.whitelist()
+def request_rework(name: str, note: str):
+	if not name:
+		return fail("bad_request", "name required")
+	if not (note or "").strip():
+		return fail("bad_request", "note required")
+	return ok(review_request_rework(name, note=note))

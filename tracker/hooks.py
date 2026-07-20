@@ -1,9 +1,9 @@
 """Frappe hooks for Tracker."""
 
 app_name = "tracker"
-app_title = "Tracker"
+app_title = "Task Management"
 app_publisher = "ZatGo Innovation"
-app_description = "Simple project, task, and ticket tracking on ERPNext"
+app_description = "Task Management on ERPNext — projects, tasks, tickets, and time"
 app_email = "engineering@zatgo.local"
 app_license = "mit"
 app_version = "0.1.0"
@@ -22,7 +22,10 @@ required_apps = ["erpnext"]
 after_install = "tracker.install.after_install"
 after_migrate = "tracker.install.after_migrate"
 
-app_include_js = ["/assets/tracker/js/tracker.js"]
+app_include_js = [
+	"/assets/tracker/js/tracker.js",
+	"/assets/tracker/js/tracker_vue.js",
+]
 app_include_css = ["/assets/tracker/css/tracker.css"]
 
 permission_query_conditions = {

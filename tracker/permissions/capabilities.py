@@ -61,13 +61,18 @@ def assert_is_top(user: str | None = None) -> None:
 
 def capability_payload(user: str | None = None) -> dict:
 	user = user or frappe.session.user
+	lead = is_lead_or_above(user)
 	return {
-		"can_manage_work": is_lead_or_above(user),
-		"can_review": is_lead_or_above(user),
-		"can_submit_timesheets": is_lead_or_above(user),
+		"can_manage_work": lead,
+		"can_review": lead,
+		"can_submit_timesheets": lead,
 		"can_approve_timesheets": is_top(user),
 		"can_close_project": is_top(user),
+		"can_create_top": is_system(user),
+		"can_assign_org": lead,
+		"can_create_sub": lead,
+		"can_create_worker": lead,
 		"is_worker_only": is_worker_only(user),
 		"is_top": is_top(user),
-		"is_lead_or_above": is_lead_or_above(user),
+		"is_lead_or_above": lead,
 	}
