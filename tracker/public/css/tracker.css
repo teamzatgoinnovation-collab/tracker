@@ -604,6 +604,10 @@
 	.tracker-hours-grid {
 		grid-template-columns: 1fr 1fr;
 	}
+
+	.tracker-hours-card-wide {
+		grid-column: 1 / -1;
+	}
 }
 
 .tracker-hours-card {

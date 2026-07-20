@@ -93,7 +93,7 @@ def after_install() -> None:
 	ensure_roles()
 	_ensure_employee_custom_fields()
 	ensure_role_permissions()
-	_ensure_activity_type("Execution")
+	_ensure_common_activity_types()
 	_ensure_desk_entry()
 	sync_public_assets()
 	frappe.clear_cache()
@@ -103,10 +103,23 @@ def after_migrate() -> None:
 	ensure_roles()
 	_ensure_employee_custom_fields()
 	ensure_role_permissions()
-	_ensure_activity_type("Execution")
+	_ensure_common_activity_types()
 	_ensure_desk_entry()
 	_unsubmit_live_activity_sessions()
 	sync_public_assets()
+
+
+def _ensure_common_activity_types() -> None:
+	"""Seed common Activity Types used on Timesheet Detail / sessions."""
+	for name in ("Execution", "Development", "Meeting", "Review", "Support", "Testing"):
+		if frappe.db.exists("Activity Type", name):
+			continue
+		try:
+			frappe.get_doc({"doctype": "Activity Type", "activity_type": name}).insert(
+				ignore_permissions=True
+			)
+		except Exception:
+			pass
 
 
 def sync_public_assets() -> None:

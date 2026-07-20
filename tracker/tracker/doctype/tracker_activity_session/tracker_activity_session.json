@@ -95,8 +95,12 @@
   {
    "default": "Execution",
    "fieldname": "activity_type",
-   "fieldtype": "Data",
-   "label": "Activity Type"
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Activity Type",
+   "options": "Activity Type",
+   "reqd": 1
   },
   {
    "fieldname": "timer_section",

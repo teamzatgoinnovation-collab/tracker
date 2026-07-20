@@ -50,6 +50,8 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				projectFilter: "",
 				statusFilter: "",
 				people: [],
+				activityTypes: [],
+				activityType: "",
 				busy: false,
 				elapsedTimer: null,
 				tick: 0,
@@ -62,7 +64,8 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			activeLabel() {
 				if (!this.active) return __("None");
 				const t = this.active.task || this.active.project || this.active.name;
-				return `${this.active.status}: ${t}`;
+				const at = this.active.activity_type ? ` · ${this.active.activity_type}` : "";
+				return `${this.active.status}: ${t}${at}`;
 			},
 			elapsedText() {
 				void this.tick;
@@ -175,6 +178,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 			async boot() {
 				try {
 					await this.loadCaps();
+					await this.loadActivityTypes();
 					if (this.showOverview) this.tab = "overview";
 					await Promise.all([this.refreshActive(), this.refreshTab()]);
 				} catch (e) {
@@ -201,6 +205,19 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 						message: __("Could not load role capabilities"),
 						indicator: "orange",
 					});
+				}
+			},
+			async loadActivityTypes() {
+				try {
+					const msg = await this.call("tracker.api.v1.activity.activity_types");
+					const data = this.unwrap(msg) || {};
+					this.activityTypes = data.items || [];
+					if (!this.activityType) {
+						this.activityType = data.default || (this.activityTypes[0] && this.activityTypes[0].name) || "Execution";
+					}
+				} catch (e) {
+					this.activityTypes = [{ name: "Execution", label: "Execution" }];
+					this.activityType = "Execution";
 				}
 			},
 			async refreshActive() {
@@ -344,7 +361,10 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 				if (!this.selected) return;
 				this.busy = true;
 				try {
-					await this.call("tracker.api.v1.activity.start", { task: this.selected });
+					await this.call("tracker.api.v1.activity.start", {
+						task: this.selected,
+						activity_type: this.activityType || undefined,
+					});
 					await this.refreshActive();
 					await this.refreshTab();
 				} catch (e) {
@@ -722,7 +742,7 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					<span v-if="roleLabel" class="tracker-role-chrome">{{ roleLabel }}</span>
 				</div>
 			</div>
-			<p class="tracker-brand-sub">{{ __("Select a task assigned to you, then Start / Pause / Stop. Leads can assign multiple workers.") }}</p>
+			<p class="tracker-brand-sub">{{ __("Select a task assigned to you, pick Activity Type, then Start / Pause / Stop. Time posts to Timesheet.") }}</p>
 
 			<div
 				class="tracker-active"
@@ -736,9 +756,21 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 					<div class="tracker-active-kicker">{{ __("Active session") }}</div>
 					<div class="tracker-active-label">{{ activeLabel }}</div>
 					<div class="tracker-elapsed" v-if="active">{{ elapsedText }}</div>
+					<div class="tracker-row-meta" v-if="active">
+						<span v-if="active.project">{{ active.project }}</span>
+						<span class="dot" v-if="active.project && active.task">·</span>
+						<span v-if="active.task">{{ active.task }}</span>
+						<span class="dot" v-if="active.activity_type">·</span>
+						<span v-if="active.activity_type">{{ active.activity_type }}</span>
+						<span class="dot" v-if="active.timesheet">·</span>
+						<span v-if="active.timesheet">{{ __("Timesheet") }} {{ active.timesheet }}</span>
+					</div>
 					<div class="tracker-elapsed" v-else>{{ __("Select a task below to begin") }}</div>
 				</div>
 				<div class="tracker-btn-row">
+					<select class="form-control" style="width:auto;min-width:9rem" v-model="activityType" :disabled="!!(active && active.status==='Running')">
+						<option v-for="at in activityTypes" :key="at.name" :value="at.name">{{ at.label || at.name }}</option>
+					</select>
 					<button class="btn btn-primary btn-sm" :disabled="!canStart || busy" @click="actStart">{{ __("Start") }}</button>
 					<button class="btn btn-default btn-sm" :disabled="!canPause || busy" @click="actPause">{{ __("Pause") }}</button>
 					<button class="btn btn-danger btn-sm" :disabled="!canStop || busy" @click="actStop">{{ __("Stop") }}</button>
@@ -910,7 +942,11 @@ frappe.pages["tracker-workbench"].on_page_load = function (wrapper) {
 						<div>
 							<span class="tracker-row-title">{{ row.user }}</span>
 							<span class="tracker-status tracker-status-working">{{ row.status }}</span>
-							<div class="tracker-row-meta">{{ row.task || row.project || row.name }}</div>
+							<div class="tracker-row-meta">
+								<span>{{ row.task || row.project || row.name }}</span>
+								<span class="dot" v-if="row.activity_type">·</span>
+								<span v-if="row.activity_type">{{ row.activity_type }}</span>
+							</div>
 						</div>
 					</div>
 				</div>

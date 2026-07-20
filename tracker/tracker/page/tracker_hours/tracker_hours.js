@@ -16,7 +16,7 @@ frappe.pages["tracker-hours"].on_page_load = function (wrapper) {
 				</div>
 			</div>
 			<p class="tracker-brand-sub">
-				${__("Submitted Timesheet hours by project and person for the selected range.")}
+				${__("Timesheet hours by project, person, activity type, and task for the selected range.")}
 			</p>
 
 			<div class="tracker-toolbar">
@@ -47,6 +47,20 @@ frappe.pages["tracker-hours"].on_page_load = function (wrapper) {
 						<span class="text-muted small tracker-user-count"></span>
 					</div>
 					<div class="tracker-hours-card-body tracker-by-user"></div>
+				</div>
+				<div class="tracker-hours-card">
+					<div class="tracker-hours-card-head">
+						<h5>${__("Hours by Activity Type")}</h5>
+						<span class="text-muted small tracker-activity-count"></span>
+					</div>
+					<div class="tracker-hours-card-body tracker-by-activity"></div>
+				</div>
+				<div class="tracker-hours-card tracker-hours-card-wide">
+					<div class="tracker-hours-card-head">
+						<h5>${__("Hours by Task")}</h5>
+						<span class="text-muted small tracker-task-count"></span>
+					</div>
+					<div class="tracker-hours-card-body tracker-by-task"></div>
 				</div>
 			</div>
 		</div>
@@ -109,6 +123,12 @@ frappe.pages["tracker-hours"].on_page_load = function (wrapper) {
 		return rows.reduce((n, r) => n + Number(r.hours || 0), 0);
 	}
 
+	function setLoading(sel) {
+		$root.find(sel).html(
+			`<div class="tracker-empty"><div class="tracker-empty-hint">${__("Loading…")}</div></div>`
+		);
+	}
+
 	function load() {
 		const from_date = $root.find(".tracker-from").val();
 		const to_date = $root.find(".tracker-to").val();
@@ -129,36 +149,38 @@ frappe.pages["tracker-hours"].on_page_load = function (wrapper) {
 			return;
 		}
 
-		$root.find(".tracker-by-project").html(
-			`<div class="tracker-empty"><div class="tracker-empty-hint">${__("Loading…")}</div></div>`
-		);
-		$root.find(".tracker-by-user").html(
-			`<div class="tracker-empty"><div class="tracker-empty-hint">${__("Loading…")}</div></div>`
-		);
+		setLoading(".tracker-by-project");
+		setLoading(".tracker-by-user");
+		setLoading(".tracker-by-activity");
+		setLoading(".tracker-by-task");
+
+		const args = { from_date, to_date, page_size: 100 };
 
 		Promise.all([
-			frappe.call("tracker.api.v1.reports.hours_by_project", {
-				from_date,
-				to_date,
-				page_size: 100,
-			}),
-			frappe.call("tracker.api.v1.reports.hours_by_user", {
-				from_date,
-				to_date,
-				page_size: 100,
-			}),
+			frappe.call("tracker.api.v1.reports.hours_by_project", args),
+			frappe.call("tracker.api.v1.reports.hours_by_user", args),
+			frappe.call("tracker.api.v1.reports.hours_by_activity_type", args),
+			frappe.call("tracker.api.v1.reports.hours_by_task", args),
 		])
-			.then(([pRes, uRes]) => {
+			.then(([pRes, uRes, aRes, tRes]) => {
 				const byProject = unwrapRows(pRes);
 				const byUser = unwrapRows(uRes);
+				const byActivity = unwrapRows(aRes);
+				const byTask = unwrapRows(tRes);
 
 				$root.find(".tracker-project-count").text(
-					byProject.error
-						? ""
-						: __("{0} h total", [sumHours(byProject.rows).toFixed(1)])
+					byProject.error ? "" : __("{0} h total", [sumHours(byProject.rows).toFixed(1)])
 				);
 				$root.find(".tracker-user-count").text(
 					byUser.error ? "" : __("{0} h total", [sumHours(byUser.rows).toFixed(1)])
+				);
+				$root.find(".tracker-activity-count").text(
+					byActivity.error
+						? ""
+						: __("{0} h total", [sumHours(byActivity.rows).toFixed(1)])
+				);
+				$root.find(".tracker-task-count").text(
+					byTask.error ? "" : __("{0} h total", [sumHours(byTask.rows).toFixed(1)])
 				);
 
 				$root.find(".tracker-by-project").html(
@@ -180,11 +202,33 @@ frappe.pages["tracker-hours"].on_page_load = function (wrapper) {
 								{ key: "entries", label: __("Entries"), muted: true },
 							])
 				);
+				$root.find(".tracker-by-activity").html(
+					byActivity.error
+						? errorHtml(byActivity.error)
+						: table(byActivity.rows, [
+								{ key: "activity_type", label: __("Activity Type") },
+								{ key: "hours", label: __("Hours") },
+								{ key: "entries", label: __("Entries"), muted: true },
+							])
+				);
+				$root.find(".tracker-by-task").html(
+					byTask.error
+						? errorHtml(byTask.error)
+						: table(byTask.rows, [
+								{ key: "task_subject", label: __("Task") },
+								{ key: "project", label: __("Project"), muted: true },
+								{ key: "activity_type", label: __("Activity Type") },
+								{ key: "hours", label: __("Hours") },
+								{ key: "entries", label: __("Entries"), muted: true },
+							])
+				);
 			})
 			.catch((e) => {
 				const message = e.message || e;
 				$root.find(".tracker-by-project").html(errorHtml(message));
 				$root.find(".tracker-by-user").html(errorHtml(message));
+				$root.find(".tracker-by-activity").html(errorHtml(message));
+				$root.find(".tracker-by-task").html(errorHtml(message));
 				frappe.msgprint({ title: __("Error"), message, indicator: "red" });
 			});
 	}

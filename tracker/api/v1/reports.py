@@ -276,3 +276,115 @@ def hours_by_user(
 		r["hours"] = float(r.get("hours") or 0)
 		r["entries"] = int(r.get("entries") or 0)
 	return paginated(slice_rows, page=page, page_size=page_size, total=total)
+
+
+@frappe.whitelist()
+def hours_by_activity_type(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	company: str | None = None,
+	page: int = 1,
+	page_size: int = 50,
+):
+	fd, td, err = _parse_dates(from_date, to_date)
+	if err:
+		return err
+	page = int(page or 1)
+	page_size = min(int(page_size or 50), 200)
+	company = company or get_company_for_user()
+	employees = _allowed_employees()
+	if employees is not None and not employees:
+		return paginated([], page=page, page_size=page_size, total=0)
+
+	conds = ["ts.docstatus < 2", "td.hours > 0", "DATE(td.from_time) BETWEEN %(fd)s AND %(td)s"]
+	vals: dict = {"fd": fd, "td": td}
+	if company:
+		conds.append("ts.company = %(company)s")
+		vals["company"] = company
+	if employees is not None:
+		conds.append("ts.employee IN %(employees)s")
+		vals["employees"] = employees
+
+	where = " AND ".join(conds)
+	rows = frappe.db.sql(
+		f"""
+		SELECT
+			COALESCE(td.activity_type, '') AS activity_type,
+			SUM(td.hours) AS hours,
+			COUNT(*) AS entries
+		FROM `tabTimesheet Detail` td
+		INNER JOIN `tabTimesheet` ts ON ts.name = td.parent
+		WHERE {where}
+		GROUP BY COALESCE(td.activity_type, '')
+		ORDER BY hours DESC
+		""",
+		vals,
+		as_dict=True,
+	)
+	total = len(rows)
+	start = (page - 1) * page_size
+	slice_rows = rows[start : start + page_size]
+	for r in slice_rows:
+		r["hours"] = float(r.get("hours") or 0)
+		r["entries"] = int(r.get("entries") or 0)
+		r["activity_type"] = r.get("activity_type") or None
+	return paginated(slice_rows, page=page, page_size=page_size, total=total)
+
+
+@frappe.whitelist()
+def hours_by_task(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	company: str | None = None,
+	page: int = 1,
+	page_size: int = 50,
+):
+	fd, td, err = _parse_dates(from_date, to_date)
+	if err:
+		return err
+	page = int(page or 1)
+	page_size = min(int(page_size or 50), 200)
+	company = company or get_company_for_user()
+	employees = _allowed_employees()
+	if employees is not None and not employees:
+		return paginated([], page=page, page_size=page_size, total=0)
+
+	conds = ["ts.docstatus < 2", "td.hours > 0", "DATE(td.from_time) BETWEEN %(fd)s AND %(td)s"]
+	vals: dict = {"fd": fd, "td": td}
+	if company:
+		conds.append("ts.company = %(company)s")
+		vals["company"] = company
+	if employees is not None:
+		conds.append("ts.employee IN %(employees)s")
+		vals["employees"] = employees
+
+	where = " AND ".join(conds)
+	rows = frappe.db.sql(
+		f"""
+		SELECT
+			COALESCE(td.task, '') AS task,
+			COALESCE(td.project, ts.parent_project, '') AS project,
+			COALESCE(td.activity_type, '') AS activity_type,
+			SUM(td.hours) AS hours,
+			COUNT(*) AS entries
+		FROM `tabTimesheet Detail` td
+		INNER JOIN `tabTimesheet` ts ON ts.name = td.parent
+		WHERE {where}
+		GROUP BY COALESCE(td.task, ''), COALESCE(td.project, ts.parent_project, ''), COALESCE(td.activity_type, '')
+		ORDER BY hours DESC
+		""",
+		vals,
+		as_dict=True,
+	)
+	total = len(rows)
+	start = (page - 1) * page_size
+	slice_rows = rows[start : start + page_size]
+	for r in slice_rows:
+		r["hours"] = float(r.get("hours") or 0)
+		r["entries"] = int(r.get("entries") or 0)
+		r["task"] = r.get("task") or None
+		r["project"] = r.get("project") or None
+		r["activity_type"] = r.get("activity_type") or None
+		if r["task"]:
+			r["task_subject"] = frappe.db.get_value("Task", r["task"], "subject") or r["task"]
+	return paginated(slice_rows, page=page, page_size=page_size, total=total)

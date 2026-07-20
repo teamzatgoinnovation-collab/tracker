@@ -14,6 +14,38 @@ def active():
 
 
 @frappe.whitelist()
+def activity_types():
+	"""Activity Type options for Start (timesheet billing codes)."""
+	rows = frappe.get_all(
+		"Activity Type",
+		fields=["name", "activity_type", "billing_rate", "costing_rate", "disabled"],
+		order_by="name asc",
+		limit_page_length=200,
+	)
+	# ERPNext Activity Type often uses name == activity_type label
+	out = []
+	for r in rows:
+		if r.get("disabled"):
+			continue
+		out.append(
+			{
+				"name": r.get("name"),
+				"label": r.get("activity_type") or r.get("name"),
+				"billing_rate": r.get("billing_rate"),
+				"costing_rate": r.get("costing_rate"),
+			}
+		)
+	default = None
+	try:
+		from tracker.tracker.doctype.tracker_settings.tracker_settings import get_default_activity_type
+
+		default = get_default_activity_type()
+	except Exception:
+		default = "Execution"
+	return ok({"items": out, "default": default})
+
+
+@frappe.whitelist()
 def start(task: str | None = None, project: str | None = None, activity_type: str | None = None):
 	if not task and not project:
 		return fail("bad_request", "task or project required")

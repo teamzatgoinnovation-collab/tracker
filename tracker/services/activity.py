@@ -141,6 +141,8 @@ def start_session(
 		extra.append(f"task={task}")
 	if project:
 		extra.append(f"project={project}")
+	if doc.activity_type:
+		extra.append(f"activity_type={doc.activity_type}")
 	log_event(
 		DOCTYPE,
 		doc.name,
