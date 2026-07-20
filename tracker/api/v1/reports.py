@@ -71,13 +71,44 @@ def overview(status: str | None = None):
 
 	# Counts by ERPNext Task status
 	counts: dict[str, int] = {}
-	status_rows = frappe.get_all(
-		"Task",
-		filters=dict(base_filters),
-		or_filters=or_filters,
-		fields=["status", "count(name) as cnt"],
-		group_by="status",
-	)
+	conds = ["1=1"]
+	vals: dict = {}
+	if company:
+		conds.append("company = %(company)s")
+		vals["company"] = company
+	if not company_scope:
+		team_users = list(get_subordinate_users(user) | {user})
+		if not team_users:
+			status_rows = []
+		else:
+			# Filter tasks assigned to team via _assign LIKE any user
+			like_parts = []
+			for i, u in enumerate(team_users):
+				key = f"u{i}"
+				like_parts.append(f"_assign LIKE %({key})s")
+				vals[key] = f"%{u}%"
+			conds.append("(" + " OR ".join(like_parts) + ")")
+			status_rows = frappe.db.sql(
+				f"""
+				SELECT status, COUNT(*) AS cnt
+				FROM `tabTask`
+				WHERE {" AND ".join(conds)}
+				GROUP BY status
+				""",
+				vals,
+				as_dict=True,
+			)
+	else:
+		status_rows = frappe.db.sql(
+			f"""
+			SELECT status, COUNT(*) AS cnt
+			FROM `tabTask`
+			WHERE {" AND ".join(conds)}
+			GROUP BY status
+			""",
+			vals,
+			as_dict=True,
+		)
 	for row in status_rows:
 		key = row.get("status") or "Open"
 		counts[key] = int(row.get("cnt") or 0)

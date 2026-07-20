@@ -1,7 +1,7 @@
 frappe.pages["tracker-hours"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
-		title: __("Tracker Hours"),
+		title: __("Task Management Hours"),
 		single_column: true,
 	});
 
