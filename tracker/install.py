@@ -32,6 +32,29 @@ SIDEBAR_ITEMS = [
 ]
 
 
+def _sidebar_item_exists(item: dict) -> bool:
+	link_type = item.get("link_type")
+	link_to = item.get("link_to")
+	if not link_to:
+		return False
+	if link_type == "Page":
+		return bool(frappe.db.exists("Page", link_to))
+	if link_type == "DocType":
+		return bool(frappe.db.exists("DocType", link_to))
+	return True
+
+
+def _safe_sidebar_items() -> list[dict]:
+	"""Only link to Page/DocType rows that already exist (avoids install-order LinkValidationError)."""
+	return [item for item in SIDEBAR_ITEMS if _sidebar_item_exists(item)]
+
+
+def _save_ignore_links(doc) -> None:
+	doc.flags.ignore_links = True
+	doc.flags.ignore_permissions = True
+	doc.save(ignore_permissions=True)
+
+
 def _sidebar_items_match(existing_items, expected_items: list[dict]) -> bool:
 	if len(existing_items) != len(expected_items):
 		return False
@@ -53,10 +76,11 @@ def _sidebar_items_match(existing_items, expected_items: list[dict]) -> bool:
 
 def _sync_sidebar_items(sidebar) -> bool:
 	"""Replace sidebar rows when labels/links drift from SIDEBAR_ITEMS."""
-	if _sidebar_items_match(sidebar.items, SIDEBAR_ITEMS):
+	expected = _safe_sidebar_items()
+	if _sidebar_items_match(sidebar.items, expected):
 		return False
 	sidebar.items = []
-	for item in SIDEBAR_ITEMS:
+	for item in expected:
 		sidebar.append("items", item)
 	return True
 
@@ -161,7 +185,7 @@ def _ensure_desk_entry() -> None:
 			if _sync_sidebar_items(sb):
 				changed = True
 			if changed:
-				sb.save(ignore_permissions=True)
+				_save_ignore_links(sb)
 		else:
 			sb = frappe.get_doc(
 				{
@@ -172,15 +196,16 @@ def _ensure_desk_entry() -> None:
 					"module": "Tracker",
 					"app": "tracker",
 					"standard": 1,
-					"items": SIDEBAR_ITEMS,
+					"items": _safe_sidebar_items(),
 				}
 			)
+			sb.flags.ignore_links = True
 			sb.insert(ignore_permissions=True)
 
 	icons = frappe.get_all("Desktop Icon", filters={"app": "tracker"}, pluck="name")
 	if not icons:
 		if frappe.db.exists("Workspace Sidebar", "Tracker"):
-			frappe.get_doc(
+			icon = frappe.get_doc(
 				{
 					"doctype": "Desktop Icon",
 					"label": "Task Management",
@@ -192,7 +217,9 @@ def _ensure_desk_entry() -> None:
 					"standard": 1,
 					"hidden": 0,
 				}
-			).insert(ignore_permissions=True)
+			)
+			icon.flags.ignore_links = True
+			icon.insert(ignore_permissions=True)
 	else:
 		for name in icons:
 			doc = frappe.get_doc("Desktop Icon", name)
@@ -210,7 +237,7 @@ def _ensure_desk_entry() -> None:
 				doc.hidden = 0
 				changed = True
 			if changed:
-				doc.save(ignore_permissions=True)
+				_save_ignore_links(doc)
 
 	# Workspace title/label for Desk
 	if frappe.db.exists("Workspace", "Tracker"):
@@ -223,6 +250,13 @@ def _ensure_desk_entry() -> None:
 			ws.label = "Task Management"
 			ws_changed = True
 		if ws_changed:
-			ws.save(ignore_permissions=True)
+			_save_ignore_links(ws)
+
+	# Keep sidebar title branded after any earlier insert
+	if frappe.db.exists("Workspace Sidebar", "Tracker"):
+		sb = frappe.get_doc("Workspace Sidebar", "Tracker")
+		if sb.title != "Task Management" or _sync_sidebar_items(sb):
+			sb.title = "Task Management"
+			_save_ignore_links(sb)
 
 	frappe.db.commit()
