@@ -328,17 +328,158 @@
 	line-height: 1.4;
 }
 
-/* Org page */
-.tracker-org .tracker-page-grid {
-	display: grid;
-	grid-template-columns: 1fr;
-	gap: 14px;
+/* Org page — Chart of Accounts style tree */
+.tracker-coa-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 10px;
+	padding: 8px 10px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--control-bg, var(--bg-color));
 }
 
-@media (min-width: 960px) {
-	.tracker-org .tracker-page-grid {
-		grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
-		align-items: start;
+.tracker-coa-tree {
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--fg-color, var(--card-bg));
+	overflow: hidden;
+	min-height: 240px;
+}
+
+.tracker-coa-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px 8px 0;
+	border-bottom: 1px solid var(--border-color);
+	cursor: default;
+	min-height: 40px;
+}
+
+.tracker-coa-row:last-child {
+	border-bottom: none;
+}
+
+.tracker-coa-row:hover {
+	background: var(--bg-light-gray, var(--subtle-fg));
+}
+
+.tracker-coa-row.selected {
+	background: var(--bg-blue-light, #e8f0fe);
+}
+
+.tracker-coa-row.is-company {
+	background: var(--subtle-fg, var(--control-bg, var(--bg-color)));
+	font-weight: 600;
+}
+
+.tracker-coa-row.is-company .tracker-coa-name {
+	font-size: 14px;
+}
+
+.tracker-coa-toggle {
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--text-muted);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	cursor: pointer;
+}
+
+.tracker-coa-toggle.invisible {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.tracker-coa-chevron {
+	display: inline-block;
+	font-size: 12px;
+	line-height: 1;
+	transition: transform 0.12s ease;
+}
+
+.tracker-coa-chevron.open {
+	transform: rotate(90deg);
+}
+
+.tracker-coa-icon {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	border: 1.5px solid var(--text-muted);
+	border-radius: 2px;
+	opacity: 0.55;
+	position: relative;
+}
+
+.tracker-coa-icon.icon-company {
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--primary) 18%, transparent);
+	border-color: var(--primary);
+	opacity: 0.85;
+}
+
+.tracker-coa-icon.icon-group {
+	border-radius: 2px;
+}
+
+.tracker-coa-icon.icon-leaf {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--text-muted);
+	border: none;
+	margin: 0 4px;
+}
+
+.tracker-coa-label {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.tracker-coa-name {
+	font-weight: 600;
+	color: var(--heading-color, var(--text-color));
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tracker-coa-meta {
+	font-size: 11.5px;
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tracker-coa-actions {
+	display: flex;
+	gap: 4px;
+	flex-shrink: 0;
+	opacity: 0;
+	transition: opacity 0.1s ease;
+}
+
+.tracker-coa-row:hover .tracker-coa-actions,
+.tracker-coa-row.selected .tracker-coa-actions {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.tracker-coa-actions {
+		opacity: 1;
 	}
 }
 
@@ -413,59 +554,6 @@
 	align-items: flex-end;
 }
 
-.tracker-org-tree {
-	border: 1px solid var(--border-color);
-	border-radius: var(--border-radius-md, 8px);
-	background: var(--fg-color, var(--card-bg));
-	overflow: hidden;
-}
-
-.tracker-org-tree-head {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	gap: 8px;
-	padding: 12px 14px;
-	border-bottom: 1px solid var(--border-color);
-	background: var(--subtle-fg, var(--control-bg, var(--bg-color)));
-}
-
-.tracker-org-row {
-	padding: 10px 14px;
-	border-bottom: 1px solid var(--border-color);
-	display: flex;
-	flex-wrap: wrap;
-	gap: 8px 12px;
-	align-items: center;
-	position: relative;
-}
-
-.tracker-org-row:last-child {
-	border-bottom: none;
-}
-
-.tracker-org-row:hover {
-	background: var(--bg-light-gray, var(--subtle-fg));
-}
-
-.tracker-org-person {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	min-width: 10rem;
-	flex: 1 1 160px;
-}
-
-.tracker-org-person strong {
-	font-weight: 600;
-	color: var(--heading-color, var(--text-color));
-}
-
-.tracker-org-person .email {
-	font-size: 12px;
-	color: var(--text-muted);
-}
-
 .tracker-role-badge {
 	display: inline-block;
 	padding: 2px 8px;
@@ -475,6 +563,7 @@
 	border: 1px solid var(--border-color);
 	background: var(--control-bg, var(--bg-color));
 	color: var(--text-color);
+	flex-shrink: 0;
 }
 
 .tracker-role-badge.role-top {
