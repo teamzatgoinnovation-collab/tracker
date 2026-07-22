@@ -265,8 +265,8 @@ def _ensure_desk_entry() -> None:
 			if sb.module != "Tracker":
 				sb.module = "Tracker"
 				changed = True
-			if getattr(sb, "title", None) != "Task Management":
-				sb.title = "Task Management"
+			if getattr(sb, "title", None) != sidebar_name:
+				sb.title = sidebar_name
 				changed = True
 			if _sync_sidebar_items(sb):
 				changed = True
@@ -278,7 +278,7 @@ def _ensure_desk_entry() -> None:
 				{
 					"doctype": "Workspace Sidebar",
 					"name": sidebar_name,
-					"title": "Task Management",
+					"title": sidebar_name,
 					"header_icon": "project",
 					"module": "Tracker",
 					"app": "tracker",
@@ -313,15 +313,34 @@ def _ensure_desk_entry() -> None:
 	else:
 		for name in icons:
 			doc = frappe.get_doc("Desktop Icon", name)
+			# autoname is field:label — change label via rename when needed
+			if doc.label != desk_label or name != desk_label:
+				try:
+					if name != desk_label and not frappe.db.exists("Desktop Icon", desk_label):
+						frappe.rename_doc(
+							"Desktop Icon",
+							name,
+							desk_label,
+							force=True,
+							show_alert=False,
+						)
+						name = desk_label
+						doc = frappe.get_doc("Desktop Icon", name)
+					else:
+						frappe.db.set_value("Desktop Icon", name, "label", desk_label, update_modified=False)
+						doc = frappe.get_doc("Desktop Icon", name)
+				except Exception:
+					frappe.db.set_value("Desktop Icon", name, "label", desk_label, update_modified=False)
+					doc = frappe.get_doc("Desktop Icon", name)
 			changed = False
-			if doc.label != desk_label:
-				doc.label = desk_label
-				changed = True
 			if doc.link_type != "Workspace Sidebar":
 				doc.link_type = "Workspace Sidebar"
 				changed = True
 			if sidebar_name and doc.link_to != sidebar_name:
 				doc.link_to = sidebar_name
+				changed = True
+			if doc.icon != "project":
+				doc.icon = "project"
 				changed = True
 			if doc.hidden:
 				doc.hidden = 0
