@@ -290,12 +290,15 @@ def _ensure_desk_entry() -> None:
 			sb.insert(ignore_permissions=True)
 
 	icons = frappe.get_all("Desktop Icon", filters={"app": "tracker"}, pluck="name")
+	# Frappe v16 Desk permits Link icons only when Desktop Icon.label.lower()
+	# matches Workspace Sidebar name.lower() in bootinfo (see desktop_icon.get_desktop_icons).
+	desk_label = sidebar_name or "Tracker"
 	if not icons:
 		if sidebar_name and frappe.db.exists("Workspace Sidebar", sidebar_name):
 			icon = frappe.get_doc(
 				{
 					"doctype": "Desktop Icon",
-					"label": "Task Management",
+					"label": desk_label,
 					"app": "tracker",
 					"icon_type": "Link",
 					"link_type": "Workspace Sidebar",
@@ -303,22 +306,16 @@ def _ensure_desk_entry() -> None:
 					"icon": "project",
 					"standard": 1,
 					"hidden": 0,
-					"parent_icon": "",
 				}
 			)
-			if icon.meta.has_field("restrict_removal"):
-				icon.restrict_removal = 1
 			icon.flags.ignore_links = True
 			icon.insert(ignore_permissions=True)
 	else:
 		for name in icons:
 			doc = frappe.get_doc("Desktop Icon", name)
 			changed = False
-			if doc.label != "Task Management":
-				doc.label = "Task Management"
-				changed = True
-			if doc.icon_type != "Link":
-				doc.icon_type = "Link"
+			if doc.label != desk_label:
+				doc.label = desk_label
 				changed = True
 			if doc.link_type != "Workspace Sidebar":
 				doc.link_type = "Workspace Sidebar"
@@ -326,32 +323,27 @@ def _ensure_desk_entry() -> None:
 			if sidebar_name and doc.link_to != sidebar_name:
 				doc.link_to = sidebar_name
 				changed = True
-			if doc.icon != "project":
-				doc.icon = "project"
-				changed = True
-			if doc.parent_icon:
-				doc.parent_icon = ""
-				changed = True
 			if doc.hidden:
 				doc.hidden = 0
 				changed = True
-			if doc.meta.has_field("restrict_removal") and not doc.restrict_removal:
-				doc.restrict_removal = 1
+			if doc.parent_icon:
+				doc.parent_icon = ""
 				changed = True
 			if changed:
 				_save_ignore_links(doc)
 
 	# Workspace title/label for Desk (avoid full save — Workspace has mandatory fields)
 	if frappe.db.exists("Workspace", "Tracker"):
-		frappe.db.set_value("Workspace", "Tracker", "title", "Task Management", update_modified=False)
+		frappe.db.set_value("Workspace", "Tracker", "title", "Tracker", update_modified=False)
 		if frappe.get_meta("Workspace").has_field("label"):
-			frappe.db.set_value("Workspace", "Tracker", "label", "Task Management", update_modified=False)
+			frappe.db.set_value("Workspace", "Tracker", "label", "Tracker", update_modified=False)
 
 	if sidebar_name and frappe.db.exists("Workspace Sidebar", sidebar_name):
 		sb = frappe.get_doc("Workspace Sidebar", sidebar_name)
 		changed = False
-		if sb.title != "Task Management":
-			sb.title = "Task Management"
+		# Keep sidebar title aligned with name so Desk label lookup stays consistent.
+		if sb.title != sidebar_name:
+			sb.title = sidebar_name
 			changed = True
 		if _sync_sidebar_items(sb):
 			changed = True
