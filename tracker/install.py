@@ -303,8 +303,11 @@ def _ensure_desk_entry() -> None:
 					"icon": "project",
 					"standard": 1,
 					"hidden": 0,
+					"parent_icon": "",
 				}
 			)
+			if icon.meta.has_field("restrict_removal"):
+				icon.restrict_removal = 1
 			icon.flags.ignore_links = True
 			icon.insert(ignore_permissions=True)
 	else:
@@ -314,14 +317,26 @@ def _ensure_desk_entry() -> None:
 			if doc.label != "Task Management":
 				doc.label = "Task Management"
 				changed = True
+			if doc.icon_type != "Link":
+				doc.icon_type = "Link"
+				changed = True
 			if doc.link_type != "Workspace Sidebar":
 				doc.link_type = "Workspace Sidebar"
 				changed = True
 			if sidebar_name and doc.link_to != sidebar_name:
 				doc.link_to = sidebar_name
 				changed = True
+			if doc.icon != "project":
+				doc.icon = "project"
+				changed = True
+			if doc.parent_icon:
+				doc.parent_icon = ""
+				changed = True
 			if doc.hidden:
 				doc.hidden = 0
+				changed = True
+			if doc.meta.has_field("restrict_removal") and not doc.restrict_removal:
+				doc.restrict_removal = 1
 				changed = True
 			if changed:
 				_save_ignore_links(doc)
