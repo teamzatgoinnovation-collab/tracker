@@ -1,3 +1,5 @@
+> **Archived — merged into [zatgo-core](https://github.com/teamzatgoinnovation-collab/zatgo-core)** (commit 052cf20, 2026-10-08). This code now lives in `zatgo_core/tracker/` and is switched on per site in ZG System Settings → Bundled Apps. Don't develop here.
+
 # Task Management (`tracker`)
 
 ERPNext domain app for company-scoped projects, tasks, tickets (Issue), and live Start / Pause / Stop activity → Timesheet.
